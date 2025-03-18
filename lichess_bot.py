@@ -7,7 +7,6 @@ import threading
 import random
 import os
 import chess.engine
-import yaml
 import urllib.request
 import sys
 
@@ -33,14 +32,12 @@ if not os.path.exists(STOCKFISH_PATH):
 logging.basicConfig(
     filename="lichess_bot.log", 
     level=logging.DEBUG, 
-    format="%(asctime)s [%(levelname)s - %(message)s"
+    format="%(asctime)s [%(levelname)s] - %(message)s"
 )
 
 # Lichess API
 session = berserk.TokenSession(TOKEN)
 client = berserk.Client(session)
-with open("config.yml", "r") as file:
-    config = yaml.safe_load(file)
 
 # call bot
 def get_active_bots():
@@ -85,10 +82,6 @@ def challenge_random_bot():
     
     except Exception as e:
         print(f"Failed to challenge bot {opponent_bot}: {e}")
-
-# Use only specific values, not overriding engine settings
-custom_message = config.get("message", "Default message")
-print(custom_message)
 
 # Stockfish engine
 engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
@@ -254,61 +247,80 @@ def get_time_control(clock,is_losing):
 
   
 # Play a game
+# Start the bot
+# Function to handle playing a game
+import logging
+import chess
+import chess.engine
+
+# Function to play a game
 def play_game(game_id):
-    logging.info(f"Game started: {game_id}")
+    logging.info(f"🎯 Game started: {game_id}")
     game = client.games.export(game_id)
     board = chess.Board()
-    move_time = get_time_control(game["clock"]) - OVERHEAD_BUFFER
 
-while not board.is_game_over():
+    # Messages for players & spectators
+    client.bots.post_message(game_id, "HELLO! HI ! BEST OF LUCK🔥 NECROMINDX is here! Buckle up for an exciting game!🚀 Welcome to the battlefield where AI meets strategy, physics fuels precision, math calculates the odds, and the universe watches as we clash in a cosmic game of intellect! ♟️⚡🌌🤖📐
+ 🤖")
+    client.bots.post_message(game_id, "🎭 Welcome, spectators! Watch NECROMINDX, built by @Suprateem11, in action!")
+
+    move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
+
     try:
-        analysis = engine.analyze(board, chess.engine.Limit(time=move_time), multipv=1)
-        score = analysis.get("score")
-        if score is not None and score.is_mate() is not None:
-            move_time = 0.01
+        while not board.is_game_over():
+            try:
+                result = engine.play(board, chess.engine.Limit(time=move_time))
+                move = result.move.uci()
+                client.bots.make_move(game_id, move)
+                board.push(result.move)
 
-        result = engine.play(board, chess.engine.Limit(time=move_time))
-        move = result.move.uci()
-        client.bots.make_move(game_id, move)
-        board.push(result.move)
-        logging.info(f"Move: {move} | Time: {move_time}s")
+                # ✅ Optimized logging
+                logging.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
 
-    except Exception as e:  # EXCEPT properly aligned
-        logging.error(f"Error making move: {e}")
-        break
+            except Exception as e:
+                logging.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
+                return  # Exit function instead of break to stop gracefully
 
-result = board.result()
-logging.info(f"Game {game_id} finished with result: {result}")
+    except Exception as e:
+        logging.critical(f"🔥 Critical error in game loop: {e}")
 
-# Accept only rated challenges
+    # Handle game result
+    result = board.result()
+    messages = {
+        "1-0": "🏆 GG! You need some practice! I won this time! Thanks for playing! 😊",
+        "0-1": "🤝 Well played! You got me this time. GG! 👍",
+        "1/2-1/2": "⚖️ That was a solid game! A draw this time. 🤝"
+    }
+
+    client.bots.post_message(game_id, messages.get(result, "Game over!"))
+    logging.info(f"📌 Game {game_id} finished with result: {result}")
+
+# Function to handle Lichess events
 def handle_events():
     """Listens for and handles incoming Lichess events."""
     try:
         for event in client.bots.stream_incoming_events():
-            if event['type'] == 'challenge':
-                challenge = event['challenge']
-                if challenge['rated']:
-                    client.bots.accept_challenge(challenge['id'])
-                    logging.info(f"Accepted { 'rated' if challenge['rated'] else 'unrated'} challenge from {challenge['challenger']['id]}" 
-                                 f"({challenge['timecontrol']['show']})")             
+            if event["type"] == "challenge":
+                challenge = event["challenge"]
+                if challenge["rated"]:
+                    client.bots.accept_challenge(challenge["id"])
+                    logging.info(f"✅ Accepted rated challenge from {challenge['challenger']['id']} ({challenge['timecontrol']['show']})")             
                 else:
-                    client.bots.decline_challenge(challenge['id'])
-                    logging.info(f"Declined unrated challenge from {challenge['challenger'][id]}")
-            
-            elif event.get['type'] == 'gameStart':
-                try:
-                    play_game(event['game']['id'])  
-                except Exception as e:
-                    logging.error(f"Error in play_game: {e}")
-                    continue  # ✅ Instead of break, continue handling other events
-    except Exception as e:
-        logging.critical(f"Critical error in event loop: {e}")
+                    client.bots.decline_challenge(challenge["id"])
+                    logging.info(f"❌ Declined unrated challenge from {challenge['challenger']['id']}")
 
-# Start the bot
+            elif event.get("type") == "gameStart":
+                try:
+                    play_game(event["game"]["id"])  
+                except Exception as e:
+                    logging.error(f"🚨 Error in play_game: {e}")
+
+    except Exception as e:
+        logging.critical(f"🔥 Critical error in event loop: {e}")
 
 if __name__ == "__main__":
     logging.info("Bot started...")
-
+    stop_event = threading.Event()
     # Start event handling in a separate thread
     event_thread = threading.Thread(target=handle_events, daemon=True)
     event_thread.start()
