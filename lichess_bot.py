@@ -289,8 +289,8 @@ def handle_events():
                 challenge = event['challenge']
                 if challenge['rated']:
                     client.bots.accept_challenge(challenge['id'])
-                    logging.info(f"Accepted { 'rated' if challenge['rated'] else 'unrated'} challenge from {challenge['challenger']['id]} " 
-                                 f"({challenge['timecontrol']['show']} timecontrol)")               
+                    logging.info(f"Accepted { 'rated' if challenge['rated'] else 'unrated'} challenge from {challenge['challenger']['id]}" 
+                                 f"({challenge['timecontrol']['show']})")             
                 else:
                     client.bots.decline_challenge(challenge['id'])
                     logging.info(f"Declined unrated challenge from {challenge['challenger'][id]}")
