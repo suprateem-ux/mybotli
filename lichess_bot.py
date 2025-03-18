@@ -4,11 +4,12 @@ import chess.engine
 import time
 import logging
 import threading
-import time
 import random
 import os
 import chess.engine
 import yaml
+import urllib.request
+import sys
 
 # Configuration
 TOKEN = os.getenv("LICHESS_API_TOKEN")
@@ -16,17 +17,31 @@ print(TOKEN)
 
  
 STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe" # Adjust if needed
+if not os.path.exists(STOCKFISH_PATH):
+    print("Stockfish not found! Downloading Stockfish 17...")
+
+    # Correct URL for Stockfish 17
+    url = "https://github.com/official-stockfish/Stockfish/releases/download/sf_17/stockfish-windows-x86-64-avx2.exe"
+
+    os.makedirs("engines", exist_ok=True)
+    urllib.request.urlretrieve(url, STOCKFISH_PATH)
+    print("Stockfish 17 downloaded!")
+
+
 
 # Logging setup
 logging.basicConfig(
     filename="lichess_bot.log", 
-    level=logging.INFO, 
-    format="%(asctime)s - %(message)s"
+    level=logging.DEBUG, 
+    format="%(asctime)s [%(levelname)s - %(message)s"
 )
 
 # Lichess API
 session = berserk.TokenSession(TOKEN)
 client = berserk.Client(session)
+with open("config.yml", "r") as file:
+    config = yaml.safe_load(file)
+
 # call bot
 def get_active_bots():
     """Fetches a list of currently online Lichess bots."""
@@ -70,9 +85,6 @@ def challenge_random_bot():
     
     except Exception as e:
         print(f"Failed to challenge bot {opponent_bot}: {e}")
-
-with open("config.yml", "r") as file:
-    config = yaml.safe_load(file)
 
 # Use only specific values, not overriding engine settings
 custom_message = config.get("message", "Default message")
@@ -270,17 +282,20 @@ logging.info(f"Game {game_id} finished with result: {result}")
 
 # Accept only rated challenges
 def handle_events():
+    """Listens for and handles incoming Lichess events."""
     try:
         for event in client.bots.stream_incoming_events():
             if event['type'] == 'challenge':
                 challenge = event['challenge']
                 if challenge['rated']:
                     client.bots.accept_challenge(challenge['id'])
-                    logging.info(f"Accepted challenge from {challenge['challenger']['id']}")
+                    logging.info(f"Accepted { 'rated' if challenge['rated'] else 'unrated'} challenge from {challenge['challenger']['id]} " 
+                                 f"({challenge['timecontrol']['show']} timecontrol)")               
                 else:
                     client.bots.decline_challenge(challenge['id'])
+                    logging.info(f"Declined unrated challenge from {challenge['challenger'][id]}")
             
-            elif event['type'] == 'gameStart':
+            elif event.get['type'] == 'gameStart':
                 try:
                     play_game(event['game']['id'])  
                 except Exception as e:
@@ -291,16 +306,19 @@ def handle_events():
 
 # Start the bot
 
-
 if __name__ == "__main__":
     logging.info("Bot started...")
 
-    # Run handle_events() in a separate thread
+    # Start event handling in a separate thread
     event_thread = threading.Thread(target=handle_events, daemon=True)
     event_thread.start()
 
     try:
-        while True:
+        while not stop_event.is_set():
             time.sleep(1)  # Keep the main thread alive
     except KeyboardInterrupt:
         logging.info("Shutting down bot gracefully...")
+        stop_event.set()  # Signal the event loop to stop
+        event_thread.join()  # Wait for the thread to exit
+        logging.info("Bot stopped cleanly.")
+        sys.exit(0)
