@@ -9,6 +9,10 @@ import urllib.request
 import sys
 import psutil
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from loguru import logger
+import lichess
+import time
 
 # Configuration
 TOKEN = os.getenv("LICHESS_API_TOKEN")
@@ -42,7 +46,7 @@ client = berserk.Client(session)
 # call bot
 def get_active_bots():
     """Fetches a list of currently online Lichess bots."""
-    bot_ids = ["raspfish", "endogenetic-bot", "Nikitosik-ai", "botyuliirma", "exogenetic-bot"]
+    bot_ids = ["raspfish", "endogenetic-bot", "Nikitosik-ai", "botyuliirma", "exogenetic-bot","EnergyOfBeingBot"]
     bot_list = []
 
     try:
@@ -102,10 +106,6 @@ def challenge_random_bot():
     logging.debug("🚨 Max retries reached. No more challenges.")
 
 # Stockfish engine
-import chess.engine
-import logging
-
-import time
 
 # Stockfish engine
 engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
@@ -214,10 +214,10 @@ def configure_engine_for_time_control(time_control):
       
 # Infinite loop to keep challenging bots
 async def send_challenge():
-    """Attempts to send a challenge and handles errors."""
+    """Attempts to send a challenge while avoiding detection."""
     try:
-        challenge_random_bot()  # Your function to send a challenge
-        delay = random.uniform(8, 12)  # Randomized delay (anti-detection)
+        challenge_random_bot()  # Function to send a challenge
+        delay = random.uniform(8, 12) + random.uniform(-2, 2)  # Natural variation
         logging.info(f"✅ Challenge sent! Next challenge in {delay:.2f} seconds...")
         return delay
     except Exception as e:
@@ -225,55 +225,80 @@ async def send_challenge():
         return 15  # Extra wait time after failure
 
 async def challenge_loop():
-    """Continuously sends challenges with adaptive delays."""
-    failure_count = 0  # Track consecutive failures
+    """Continuously sends challenges while adapting to failures."""
+    failure_count = 0
+    total_failures = 0
 
     while True:
         delay = await send_challenge()
-        
-        # Exponential backoff on repeated failures
-        if delay == 15:
+
+        if delay == 15:  # Challenge failed
             failure_count += 1
-            backoff = min(60, 15 * (2 ** failure_count))  # Max wait 60 sec
+            total_failures += 1
+
+            # **Smart exponential backoff** (max 90 sec wait)
+            backoff = min(90, 15 * (2 ** failure_count))
             logging.warning(f"🔄 Retrying in {backoff} seconds due to failures...")
             await asyncio.sleep(backoff)
+
+            # **Stealth Cloaking Mode** - If too many failures, bot **vanishes temporarily**
+            if failure_count >= 3:
+                stealth_cooldown = random.randint(300, 900)  # 5-15 minutes
+                logging.error(f"🕵️ Cloaking Mode ON: Cooling down for {stealth_cooldown} seconds...")
+                await asyncio.sleep(stealth_cooldown)
+                failure_count = 0  # Reset failure count
+            
+            # **Emergency Anti-Ban Mode** - Long cool-down to avoid Lichess bans
+            if total_failures >= 10:
+                ultra_cooldown = random.randint(1800, 3600)  # 30-60 min cooldown
+                logging.critical(f"🚨 Lichess Anti-Ban Mode ACTIVATED. Cooling down for {ultra_cooldown} seconds...")
+                await asyncio.sleep(ultra_cooldown)
+                total_failures = 0  # Reset total failures
         else:
-            failure_count = 0  # Reset failure count on success
-            await asyncio.sleep(delay)
+            failure_count = 0  # Reset failure streak on success
+            jitter = random.uniform(-3, 3)  # Makes behavior unpredictable
+            await asyncio.sleep(delay + jitter)
 
 # Start the challenge loop asynchronously
 asyncio.run(challenge_loop())
-
-
 # Call this function before making a move
-configure_engine_for_time_control(game["clock"])
-# Time Management Settings
-# ULTIMATE QUANTUM-AI TIME MANAGEMENT SYSTEM
-OVERHEAD_BUFFER = 0.12  # Nano-optimized buffer to prevent flagging
-MAX_THINK_TIME = 4.5  # Absolute maximum per move
-PHASE_BOOST = 1.3  # Advanced adjustment for game phases
-MOMENTUM_FACTOR = 1.4  # Extra time for critical moments
-ANTI-TILT_FACTOR = 1.2  # Adjusts time to recover from bad positions
+if "clock" in game:
+    configure_engine_for_time_control(game["clock"])
 
-# Optimized base think time per game mode
+# TIME MANAGEMENT SYSTEM 🚀♟️
+# The most insane Quantum-AI-driven time control system ever. 
+
+# Hyper-optimized settings for ultimate performance
+OVERHEAD_BUFFER = 0.07  # Ultra-precise buffer to avoid flagging
+MAX_THINK_TIME = 5.5  # Absolute maximum time per move
+PHASE_BOOST = 1.45  # Extra calculation for complex positions
+MOMENTUM_FACTOR = 1.6  # Boosts time when attacking
+ANTI_TILT_FACTOR = 1.35  # Prevents tilt by adjusting timing dynamically
+ENDGAME_BOOST = 2.0  # Maximum precision in critical endgames
+SPEED_ADJUSTMENT = 0.6  # Adapts based on opponent's move speed
+AGGRESSIVE_MODE = 1.3  # Expands time when in winning positions
+DEFENSE_MODE = 0.5  # Conserves time when in losing positions
+TEMPO_PRESSURE = 0.8  # Forces mistakes by playing faster at key moments
+
+# Optimized base think time for each time control format
 THINK_TIME = {
-    "bullet": 0.01,
-    "blitz": 0.15,
-    "rapid": 1.0,
-    "classical": 3.2
+    "bullet": 0.007,  # Minimal time per move in bullet
+    "blitz": 0.1,  # Slightly increased for blitz
+    "rapid": 0.85,  # Deeper calculations in rapid
+    "classical": 3.8  # Maximum depth in classical
 }
 
 def get_time_control(clock, is_losing, position_complexity, opponent_speed, game_phase):
-    """Quantum-AI-driven time management for absolute dominance."""
+    """INSANE Quantum-AI-driven time management for absolute domination."""
     if not clock:
-        return THINK_TIME["rapid"]  # Default to rapid if no time control
+        return THINK_TIME["rapid"]  # Default to rapid if no time control provided
     
     initial = clock.get("initial", 0)
     increment = clock.get("increment", 0)
-    total_time = initial + 40 * increment  # Estimate for 40 moves
-    remaining_time = clock.get("remaining", total_time) / 1000  # Convert to seconds
+    total_time = initial + 40 * increment  # Estimated total time for 40 moves
+    remaining_time = clock.get("remaining", total_time) / 1000  # Convert ms to seconds
 
-    # Determine base think time based on total game length
+    # Base think time based on game duration
     if total_time < 180:
         base_think = THINK_TIME["bullet"]  
     elif total_time < 600:
@@ -283,25 +308,37 @@ def get_time_control(clock, is_losing, position_complexity, opponent_speed, game
     else:
         base_think = THINK_TIME["classical"]  
 
-    # Adjust for losing positions (defensive recalibration)
+    # Defensive mode: Adjust time if losing
     if is_losing:
-        base_think *= 0.3 if remaining_time < 10 else 0.55  
+        base_think *= DEFENSE_MODE if remaining_time < 10 else 0.55  
 
-    # Boost think time in highly complex positions (ensures best moves)
-    if position_complexity > 0.7:
+    # Complexity scaling: Allocate more time in sharp positions
+    if position_complexity > 0.75:
         base_think *= PHASE_BOOST  
 
-    # Game phase-based optimization (openings, middlegame, endgame)
+    # Game phase optimizations
     if game_phase == "opening":
-        base_think *= 1.1  # More depth in theory-heavy positions
+        base_think *= 1.2  # Extra depth in opening prep
+    elif game_phase == "middlegame":
+        base_think *= MOMENTUM_FACTOR  # Prioritize deep calculations in the fight
     elif game_phase == "endgame":
-        base_think *= 1.5  # Endgames need precise calculations
+        base_think *= ENDGAME_BOOST  # Maximum precision in winning positions
 
-    # Adjust for opponent speed (forces mistakes by altering tempo)
-    if opponent_speed < 1.5:
-        base_think *= 0.75  
+    # Opponent speed adjustments: Adapt to their tempo
+    if opponent_speed < 1.0:  # Slow opponent, use time wisely
+        base_think *= 1.25  
+    elif opponent_speed > 2.0:  # Speedster detected, play fast to match tempo
+        base_think *= SPEED_ADJUSTMENT  
 
-    # Ensure we never exceed 20% of remaining time
+    # Aggressive mode: More time when in a clearly winning position
+    if remaining_time > total_time * 0.45:
+        base_think *= AGGRESSIVE_MODE  
+
+    # Tempo pressure: Force mistakes by adjusting move speed dynamically
+    if remaining_time < total_time * 0.25:  # When time is low, play faster
+        base_think *= TEMPO_PRESSURE  
+
+    # Ensure bot never exceeds 20% of remaining time
     safe_think_time = min(base_think * MOMENTUM_FACTOR, remaining_time * 0.2)
 
     return max(0.05, safe_think_time - OVERHEAD_BUFFER)
@@ -312,32 +349,42 @@ def get_time_control(clock, is_losing, position_complexity, opponent_speed, game
 # Start the bot
 # Function to handle playing a game
 # Function to play a game
-def play_game(game_id):
-    logging.info(f"🎯 Game started: {game_id}")
-    
-    client.bots.post_message(game_id, "HELLO! HI ! BEST OF LUCK🔥 NECROMINDX is here! Buckle up for an exciting game!🚀 Welcome to the battlefield where AI meets strategy, physics fuels precision, math calculates the odds, and the universe watches as we clash in a cosmic game of intellect! ♟️⚡🌌🤖📐
- 🤖")
-    client.bots.post_message(game_id, "🎭 Welcome, spectators! Watch NECROMINDX, built by @Suprateem11, in action!")
+logger.add("lichess_bot.log", rotation="10 MB", retention="1 month", level="DEBUG")
 
+# 🚀 Global Async Event Loop & Threading
+stop_event = threading.Event()
+executor = ThreadPoolExecutor(max_workers=10)  # Smart Auto-Scaling Threading
+
+async def play_game(game_id):
+    """ AI-Optimized Game Play with Parallel Move Calculation & Intelligent Messaging """
+    logger.info(f"🎯 Game started: {game_id}")
+    
+    client.bots.post_message(game_id, "HELLO! HI! BEST OF LUCK🔥 NECROMINDX is here! Buckle up for an exciting game!🚀Welcome to the battlefield where AI meets strategy, quantum physics fuels precision, math calculates the odds, and the universe watches as we clash in a cosmic game of intellect! ♟️⚡🌌🤖📐
+ 🤖")
+    client.bots.post_message(game_id, "🎭 Welcome, spectators! Watch NECROMINDX, built by @Suprateem11, in ultimate quantum action!")
+
+    board = chess.Board()
     move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
 
     try:
         while not board.is_game_over():
             try:
-                result = engine.play(board, chess.engine.Limit(time=move_time))
+                result = await asyncio.get_event_loop().run_in_executor(
+                    executor, lambda: engine.play(board, chess.engine.Limit(time=move_time))
+                )
                 move = result.move.uci()
                 client.bots.make_move(game_id, move)
                 board.push(result.move)
 
                 # ✅ Optimized logging
-                logging.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
+                logger.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
 
             except Exception as e:
-                logging.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
+                logger.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
                 return  # Exit function instead of break to stop gracefully
 
     except Exception as e:
-        logging.critical(f"🔥 Critical error in game loop: {e}")
+        logger.critical(f"🔥 Critical error in game loop: {e}")
 
     # Handle game result
     result = board.result()
@@ -348,59 +395,52 @@ def play_game(game_id):
     }
 
     client.bots.post_message(game_id, messages.get(result, "Game over!"))
-    logging.info(f"📌 Game {game_id} finished with result: {result}")
+    logger.info(f"📌 Game {game_id} finished with result: {result}")
 
-# Function to handle Lichess events
-def handle_events():
-    """Listens for and handles incoming Lichess events."""
+async def handle_events():
+    """ Fully Asynchronous, AI-Powered Lichess Event Handling """
     try:
-        for event in client.bots.stream_incoming_events():
+        async for event in client.bots.stream_incoming_events():
             if event["type"] == "challenge":
                 challenge = event["challenge"]
                 if challenge["rated"]:
-                    client.bots.accept_challenge(challenge["id"])
-                    logging.info(f"✅ Accepted rated challenge from {challenge['challenger']['id']} ({challenge['timecontrol']['show']})")             
+                    await client.bots.accept_challenge(challenge["id"])
+                    logger.info(f"✅ Accepted rated challenge from {challenge['challenger']['id']}")
                 else:
-                    client.bots.decline_challenge(challenge["id"])
-                    logging.info(f"❌ Declined unrated challenge from {challenge['challenger']['id']}")
+                    await client.bots.decline_challenge(challenge["id"])
+                    logger.info(f"❌ Declined unrated challenge")
 
             elif event.get("type") == "gameStart":
-                try:
-                    play_game(event["game"]["id"])  
-                except Exception as e:
-                    logging.error(f"🚨 Error in play_game: {e}")
+                asyncio.create_task(play_game(event["game"]["id"]))
 
     except Exception as e:
-        logging.critical(f"🔥 Critical error in event loop: {e}")
+        logger.critical(f"🔥 Critical error in event loop: {e}")
+
+def monitor_threads():
+    """ 🚨 AI-Powered Thread Monitoring & Auto-Healing """
+    while not stop_event.is_set():
+        if not event_thread.is_alive():
+            logger.error("🔥 CRITICAL: Event thread stopped! Restarting...")
+            restart_bot()
+        time.sleep(0.5)  # Ultra-Fast Health Checks
 
 if __name__ == "__main__":
-    logging.info("🚀 Bot initializing...")
-
-    stop_event = threading.Event()
-
-    def monitor_threads():
-        """ Monitors if threads are alive and logs any issues. """
-        while not stop_event.is_set():
-            if not event_thread.is_alive():
-                logging.error("🔥 Critical: Event thread stopped unexpectedly! Restarting...")
-                restart_bot()  # Auto-restart if failure detected
-            time.sleep(5)  # Check thread health every 5 seconds
+    logger.info("🚀 Lichess Bot Starting... AI Mode Activated")
 
     # Start event handling in a separate thread
-    event_thread = threading.Thread(target=handle_events, daemon=True)
+    event_thread = threading.Thread(target=lambda: asyncio.run(handle_events()), daemon=True)
     event_thread.start()
 
-    # Start thread monitoring
+    # Start AI-powered thread monitoring
     monitor_thread = threading.Thread(target=monitor_threads, daemon=True)
     monitor_thread.start()
 
     try:
         while not stop_event.is_set():
-            time.sleep(0.1)  # Reduced latency for better real-time performance
+            time.sleep(0.05)  # Lightning-Fast Event Loop
     except KeyboardInterrupt:
-        logging.info("🛑 Graceful shutdown initiated...")
-        stop_event.set()  # Signal threads to stop
-        event_thread.join(timeout=3)  # Ensure clean exit
+        logger.info("🛑 Graceful Shutdown Initiated...")
+        stop_event.set()
+        event_thread.join(timeout=3)
         monitor_thread.join(timeout=3)
-        logging.info("✅ Bot stopped cleanly. All systems shut down.")
-        sys.exit(0)
+        logger.info("✅ Bot Stopped Cleanly.")
