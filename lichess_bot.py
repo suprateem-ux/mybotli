@@ -170,11 +170,11 @@ ENGINE_CONFIGS = {
         "Nodes": 1200000,
         "Depth": 28,
         "Move Overhead": 300,
-        "Threads": max(4, CPU_CORES),
+        "Threads": max(6, CPU_CORES),
         "Ponder": True,
         "Use NNUE": True,
         "MultiPV": 4,
-        "Hash": min(8192, TOTAL_RAM),
+        "Hash": min(6144, TOTAL_RAM),
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
         "Best Book move": True,
         "Book Depth": 20,
@@ -288,64 +288,70 @@ THINK_TIME = {
     "classical": 3.8  # Maximum depth in classical
 }
 
-def get_time_control(clock, is_losing, position_complexity, opponent_speed, game_phase):
-    """INSANE Quantum-AI-driven time management for absolute domination."""
+# Play a game
+def get_time_control(clock, is_losing=False, position_complexity=1.0, opponent_speed=1.0, game_phase="middlegame"):
+    """🧠💥 HYPER-OPTIMIZED Quantum-AI Time Management – The ABSOLUTE PEAK of Chess AI Strategy."""
+
+    # ⛑️ FAILSAFE PROTOCOLS (NO CRASH, NO ERRORS, NO MERCY)
     if not clock:
-        return THINK_TIME["rapid"]  # Default to rapid if no time control provided
+        return THINK_TIME["rapid"]  # Default to rapid if clock is missing
     
     initial = clock.get("initial", 0)
     increment = clock.get("increment", 0)
-    total_time = initial + 40 * increment  # Estimated total time for 40 moves
-    remaining_time = clock.get("remaining", total_time) / 1000  # Convert ms to seconds
+    remaining_time = max(clock.get("remaining", initial) / 1000, 0.1)  # Prevent zero
+    total_time = max(initial + 40 * increment, 1)  # Estimated total game time, prevent division by zero
 
-    # Base think time based on game duration
-    if total_time < 180:
-        base_think = THINK_TIME["bullet"]  
-    elif total_time < 600:
-        base_think = THINK_TIME["blitz"]  
-    elif total_time < 1800:
-        base_think = THINK_TIME["rapid"]  
-    else:
-        base_think = THINK_TIME["classical"]  
+    # 🔥 BASE THINK TIME SELECTION (CATEGORICALLY OPTIMAL)
+    if total_time < 180:  
+        base_think = THINK_TIME["bullet"]
+    elif total_time < 600:  
+        base_think = THINK_TIME["blitz"]
+    elif total_time < 1800:  
+        base_think = THINK_TIME["rapid"]
+    else:  
+        base_think = THINK_TIME["classical"]
 
-    # Defensive mode: Adjust time if losing
+    # 🛡️ DEFENSE MODE: If Losing, Play Faster to Survive
     if is_losing:
-        base_think *= DEFENSE_MODE if remaining_time < 10 else 0.55  
+        base_think *= DEFENSE_MODE if remaining_time < 10 else ANTI_TILT_FACTOR
 
-    # Complexity scaling: Allocate more time in sharp positions
-    if position_complexity > 0.75:
-        base_think *= PHASE_BOOST  
+    # 🏹 COMPLEXITY SCALING: Allocate More Time in Sharp Positions
+    base_think *= 1 + ((position_complexity - 0.5) * PHASE_BOOST)
 
-    # Game phase optimizations
-    if game_phase == "opening":
-        base_think *= 1.2  # Extra depth in opening prep
-    elif game_phase == "middlegame":
-        base_think *= MOMENTUM_FACTOR  # Prioritize deep calculations in the fight
-    elif game_phase == "endgame":
-        base_think *= ENDGAME_BOOST  # Maximum precision in winning positions
+    # ♟️ GAME PHASE ADAPTATION: Maximize Move Efficiency  
+    game_phase_multipliers = {
+        "opening": 1.3,  # More time for deep prep  
+        "middlegame": MOMENTUM_FACTOR,  # Deep calculations during battles  
+        "endgame": ENDGAME_BOOST  # Precise, clinical finishing  
+    }
+    base_think *= game_phase_multipliers.get(game_phase, 1.0)
 
-    # Opponent speed adjustments: Adapt to their tempo
-    if opponent_speed < 1.0:  # Slow opponent, use time wisely
-        base_think *= 1.25  
-    elif opponent_speed > 2.0:  # Speedster detected, play fast to match tempo
-        base_think *= SPEED_ADJUSTMENT  
+    # ⚡ OPPONENT SPEED REACTION SYSTEM (DYNAMICALLY ADAPTIVE)
+    if opponent_speed < 1.0:  
+        base_think *= 1.3  # If opponent is slow, use time wisely
+    elif opponent_speed > 2.0:  
+        base_think *= SPEED_ADJUSTMENT  # If opponent is fast, blitz them back
 
-    # Aggressive mode: More time when in a clearly winning position
-    if remaining_time > total_time * 0.45:
-        base_think *= AGGRESSIVE_MODE  
+    # 🔥 AGGRESSIVE MODE: Take More Time When Clearly Winning
+    if remaining_time > total_time * 0.5:
+        base_think *= AGGRESSIVE_MODE
 
-    # Tempo pressure: Force mistakes by adjusting move speed dynamically
-    if remaining_time < total_time * 0.25:  # When time is low, play faster
+    # ⏳ TEMPO PRESSURE: When Time is Low, Force Blunders
+    if remaining_time < total_time * 0.2:
         base_think *= TEMPO_PRESSURE  
 
-    # Ensure bot never exceeds 20% of remaining time
-    safe_think_time = min(base_think * MOMENTUM_FACTOR, remaining_time * 0.2)
+    # 🧩 **NEW ULTRA-ADVANCED LOGIC – PREVENTS TIME WASTE**  
+    # - **Ensures Bot Never Wastes Think Time on Obvious Moves**
+    # - **Deep Calculation ONLY When Required**
+    if position_complexity < 0.4 and game_phase == "middlegame":  
+        base_think *= 0.7  # Simple positions → Spend less time
 
+    # ⚠️ **FAILSAFE: NEVER FLAG, NEVER BLUNDER, NEVER EXCEED LIMITS**  
+    safe_think_time = min(base_think * MOMENTUM_FACTOR, remaining_time * 0.15, MAX_THINK_TIME)  
+
+    # ✅ ENSURE ABSOLUTE SAFETY  
     return max(0.05, safe_think_time - OVERHEAD_BUFFER)
 
-
-  
-# Play a game
 # Start the bot
 # Function to handle playing a game
 # Function to play a game
