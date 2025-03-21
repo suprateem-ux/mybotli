@@ -19,32 +19,51 @@ import multiprocessing
 
 # Configuration
 TOKEN = os.getenv("LICHESS_API_TOKEN")
-print(TOKEN)
+if not TOKEN:
+    raise ValueError("❌ Lichess API token not found! Set 'LICHESS_API_TOKEN' as an environment variable.")
 
- 
-STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe" # Adjust if needed
+print(f"✅ API Token Loaded: {TOKEN[:5]}******")  # Hide most of the token for security
+
+# 🔥 Stockfish Engine Configuration
+STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Adjust path if needed
+
 if not os.path.exists(STOCKFISH_PATH):
-    print("Stockfish not found! Downloading Stockfish 17...")
+    print("⚠️ Stockfish not found! Downloading Stockfish 17...")
 
-    # Correct URL for Stockfish 17
     url = "https://github.com/official-stockfish/Stockfish/releases/download/sf_17/stockfish-windows-x86-64-avx2.exe"
-
     os.makedirs("engines", exist_ok=True)
-    urllib.request.urlretrieve(url, STOCKFISH_PATH)
-    print("Stockfish 17 downloaded!")
+
+    try:
+        urllib.request.urlretrieve(url, STOCKFISH_PATH)
+        print("✅ Stockfish 17 downloaded successfully!")
+    except Exception as e:
+        print(f"❌ Failed to download Stockfish: {e}")
+
+# 📝 Logging Setup
+from loguru import logger  # Better logging
+logger.add("lichess_bot.log", rotation="10 MB", retention="1 month", level="DEBUG")
+
+# 📡 Lichess API Setup
+try:
+    session = berserk.TokenSession(TOKEN)
+    client = berserk.Client(session)
+    logger.info("✅ Successfully connected to Lichess API!")
+except Exception as e:
+    logger.critical(f"❌ Lichess API connection failed: {e}")
+    raise
+
+# 🔥 Initialize Stockfish Engine (Fix the 'engine' error)
+try:
+    global engine  # ✅ Declare as global
+    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+    logger.info("✅ Stockfish engine initialized successfully!")
+except Exception as e:
+    logger.critical(f"❌ Failed to initialize Stockfish: {e}")
+    raise 
 
 
 
-# Logging setup
-logging.basicConfig(
-    filename="lichess_bot.log", 
-    level=logging.DEBUG, 
-    format="%(asctime)s [%(levelname)s] - %(message)s"
-)
 
-# Lichess API
-session = berserk.TokenSession(TOKEN)
-client = berserk.Client(session)
 
 # call bot
 def get_active_bots():
@@ -110,14 +129,11 @@ def challenge_random_bot():
 
 # Stockfish engine
 
-# Stockfish engine
-engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-
 # Dynamically determine system capabilities
 TOTAL_RAM = psutil.virtual_memory().total // (1024 * 1024)  # Convert to MB
 CPU_CORES = psutil.cpu_count(logical=False)
 
-# Define optimized Stockfish settings
+    # Auto-Healing Mechanism# Define optimized Stockfish settings
 ENGINE_CONFIGS = {
     "hyperbullet": {
         "Nodes": 200000,
@@ -189,6 +205,7 @@ ENGINE_CONFIGS = {
 
 def configure_engine_for_time_control(time_control):
     """Dynamically configure Stockfish settings based on game time."""
+    global engine
     if time_control <= 30:
         config = ENGINE_CONFIGS["hyperbullet"]
     elif time_control <= 300:
@@ -197,23 +214,49 @@ def configure_engine_for_time_control(time_control):
         config = ENGINE_CONFIGS["rapid"]
     else:
         config = ENGINE_CONFIGS["classical"]
-    
-    engine.configure(config)
-    logging.debug(f"🔥 Stockfish configured for {time_control}s games: {config}")
+        failed_options = []
+    for option, value in config.items():
+        try:
+            engine.configure({option: value})
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to set {option}: {e}")
+            failed_options.append(option)
 
-    # Auto-Healing Mechanism
+    logging.info(f"🔥 Stockfish configured for {time_control}s games. Failed options: {failed_options if failed_options else 'None'}")
+
+    # ✅ Auto-Healing: Restart Stockfish if it's unresponsive
     try:
-        engine.ping()
+        engine.ping()  # Ensure Stockfish is running
     except Exception as e:
-        logging.error(f"⚠️ Engine crashed! Restarting... {e}")
-        time.sleep(1)
-        global engine
+        logging.error(f"⚠️ Stockfish engine crashed! Restarting... Reason: {e}")
+        restart_stockfish(config)
+
+def restart_stockfish(config):
+    """Restarts Stockfish and re-applies configuration."""
+    global engine
+    time.sleep(1)  # Short delay before restarting
+    try:
+        engine.close()  # Ensure any existing engine is closed
+    except Exception:
+        pass  # Ignore errors if engine was already closed
+
+    try:
         engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-        engine.configure(config)
         logging.info("✅ Stockfish restarted successfully!")
 
-  
-    
+        # Reapply configuration
+        failed_options = []
+        for option, value in config.items():
+            try:
+                engine.configure({option: value})
+            except Exception as e:
+                logging.warning(f"⚠️ Failed to set {option} after restart: {e}")
+                failed_options.append(option)
+
+        logging.info(f"✅ Stockfish reconfigured after restart. Failed options: {failed_options if failed_options else 'None'}")
+
+    except Exception as e:
+        logging.critical(f"❌ Stockfish restart failed! Check engine path or system resources. Error: {e}")    
       
 # Infinite loop to keep challenging bots
 async def send_challenge():
