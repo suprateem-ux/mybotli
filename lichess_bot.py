@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
 import lichess
 import time
+import traceback
+import multiprocessing
+
 
 # Configuration
 TOKEN = os.getenv("LICHESS_API_TOKEN")
