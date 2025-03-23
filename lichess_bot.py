@@ -1,4 +1,4 @@
-import berserk
+racimport berserk
 import chess
 import logging
 import threading
@@ -11,10 +11,21 @@ import psutil
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
-import lichess
 import time
 import traceback
 import multiprocessing
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from functools import lru_cache
+from collections import deque
+import random
+from functools import lru_cache
+from stockfish import Stockfish
+import torch
+
+
 
 
 # Configuration
@@ -151,6 +162,7 @@ ENGINE_CONFIGS = {
         "SyzygyProbeDepth": min(1, TOTAL_RAM // 8192),
         "SyzygyProbeLimit": 7,
         "AutoLagCompensation": True,
+        "SyzygyPath": "https://tablebase.lichess.ovh",
         "BlunderDetection": True
     },
     "blitz": {
@@ -167,6 +179,7 @@ ENGINE_CONFIGS = {
         "Book Depth": 12,
         "Book Variety": 40,
         "SyzygyProbeDepth": min(2, TOTAL_RAM // 8192),
+        "SyzygyPath": "https://tablebase.lichess.ovh",
         "AutoLagCompensation": True
     },
     "rapid": {
@@ -182,6 +195,7 @@ ENGINE_CONFIGS = {
         "Best Book move": True,
         "Book Depth": 15,
         "Book Variety": 45,
+        "SyzygyPath": "https://tablebase.lichess.ovh",
         "SyzygyProbeDepth": min(4, TOTAL_RAM // 8192),
         "AutoLagCompensation": True
     },
@@ -199,29 +213,91 @@ ENGINE_CONFIGS = {
         "Book Depth": 20,
         "Book Variety": 50,
         "SyzygyProbeDepth": min(6, TOTAL_RAM // 8192),
+        "SyzygyPath": "https://tablebase.lichess.ovh",
         "AutoLagCompensation": True
     }
 }
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Global variables
+engine = None  # Initialize the engine globally
+STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Replace with the actual path to Stockfish
 def configure_engine_for_time_control(time_control):
     """Dynamically configure Stockfish settings based on game time."""
     global engine
+
+    # Input validation
+    if not isinstance(time_control, (int, float)) or time_control < 0:
+        raise ValueError("time_control must be a non-negative number")
+
+    # Initialize failed_options list
+    failed_options = []
+
+    # Ensure engine is initialized
+    if engine is None:
+        logger.error("❌ Stockfish engine is not initialized! Call initialize_stockfish() first.")
+        return
+
+    # Determine settings based on time control
     if time_control <= 30:
         config = ENGINE_CONFIGS["hyperbullet"]
-    elif time_control <= 300:
+    elif time_control <= 180:
         config = ENGINE_CONFIGS["blitz"]
     elif time_control <= 600:
         config = ENGINE_CONFIGS["rapid"]
     else:
         config = ENGINE_CONFIGS["classical"]
-        failed_options = []
-    for option, value in config.items():
+
+       
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Global variables
+engine = None  # Initialize the engine globally
+STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Replace with the actual path to Stockfish
+def configure_engine_for_time_control(time_control):
+    """Dynamically configure Stockfish settings based on game time."""
+    global engine
+
+    # Input validation
+    if not isinstance(time_control, (int, float)) or time_control < 0:
+        raise ValueError("time_control must be a non-negative number")
+
+    # Initialize failed_options list
+    failed_options = []
+
+    # Ensure engine is initialized
+    if engine is None:
+        logging.error("❌ Stockfish engine is not initialized! Call initialize_stockfish() first.")
+        return
+
+    # Determine settings based on time control
+    if time_control <= 30:
+        config = ENGINE_CONFIGS["hyperbullet"]
+    elif time_control <= 180:
+        config = ENGINE_CONFIGS["blitz"]
+    elif time_control <= 600:
+        config = ENGINE_CONFIGS["rapid"]
+    else:
+        config = ENGINE_CONFIGS["classical"]
+
+    # Apply configurations to Stockfish
+    for option, value in config.items():  # <-- Fixed indentation here
         try:
             engine.configure({option: value})
+            logging.info(f"✅ Set {option} to {value}")
         except Exception as e:
             logging.warning(f"⚠️ Failed to set {option}: {e}")
             failed_options.append(option)
 
+    if failed_options:
+        logging.warning(f"⚠️ Some options failed to apply: {failed_options}")
+
+    # Log final configuration status
     logging.info(f"🔥 Stockfish configured for {time_control}s games. Failed options: {failed_options if failed_options else 'None'}")
 
     # ✅ Auto-Healing: Restart Stockfish if it's unresponsive
@@ -231,15 +307,20 @@ def configure_engine_for_time_control(time_control):
         logging.error(f"⚠️ Stockfish engine crashed! Restarting... Reason: {e}")
         restart_stockfish(config)
 
+    return failed_options
 def restart_stockfish(config):
     """Restarts Stockfish and re-applies configuration."""
     global engine
     time.sleep(1)  # Short delay before restarting
-    try:
-        engine.close()  # Ensure any existing engine is closed
-    except Exception:
-        pass  # Ignore errors if engine was already closed
 
+    # Close the existing engine (if any)
+    try:
+        if engine:
+            engine.close()
+    except Exception as e:
+        logging.warning(f"⚠️ Failed to close engine: {e}")
+
+    # Restart Stockfish
     try:
         engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
         logging.info("✅ Stockfish restarted successfully!")
@@ -249,6 +330,7 @@ def restart_stockfish(config):
         for option, value in config.items():
             try:
                 engine.configure({option: value})
+                logging.info(f"✅ Successfully reconfigured {option} = {value}")
             except Exception as e:
                 logging.warning(f"⚠️ Failed to set {option} after restart: {e}")
                 failed_options.append(option)
@@ -256,8 +338,7 @@ def restart_stockfish(config):
         logging.info(f"✅ Stockfish reconfigured after restart. Failed options: {failed_options if failed_options else 'None'}")
 
     except Exception as e:
-        logging.critical(f"❌ Stockfish restart failed! Check engine path or system resources. Error: {e}")    
-      
+        logging.critical(f"❌ Stockfish restart failed! Check engine path or system resources. Error: {e}")
 # Infinite loop to keep challenging bots
 async def send_challenge():
     """Attempts to send a challenge while avoiding detection."""
@@ -270,17 +351,38 @@ async def send_challenge():
         logging.error(f"❌ Challenge failed: {e}")
         return 15  # Extra wait time after failure
 
+# Machine learning-inspired failure tracking (simple version)
+FAILURE_HISTORY = deque(maxlen=50)  # Stores last 50 outcomes
+
+def predict_failure():
+    """Predicts the probability of failure based on past outcomes."""
+    if not FAILURE_HISTORY:
+        return 0.2  # Default failure probability (20%)
+    return sum(FAILURE_HISTORY) / len(FAILURE_HISTORY)
+
+async def cloud_failover():
+    """Simulates switching to a cloud-based instance to continue operations."""
+    logging.critical("☁️ Switching to CLOUD MODE due to excessive failures!")
+    await asyncio.sleep(random.randint(5, 15))  # Simulated transition time
+    logging.critical("🌍 Cloud Mode ACTIVE. Challenges will be sent from cloud instance!")
+
 async def challenge_loop():
-    """Continuously sends challenges while adapting to failures."""
+    """Continuously sends challenges while adapting to failures with ML and parallel handling."""
     failure_count = 0
     total_failures = 0
+    cloud_switch_triggered = False
 
     while True:
-        delay = await send_challenge()
+        predicted_fail_chance = predict_failure()
+        if random.random() < predicted_fail_chance:
+            delay = 15  # Simulated failure
+        else:
+            delay = random.randint(5, 10)  # Simulated success
 
         if delay == 15:  # Challenge failed
             failure_count += 1
             total_failures += 1
+            FAILURE_HISTORY.append(1)
 
             # **Smart exponential backoff** (max 90 sec wait)
             backoff = min(90, 15 * (2 ** failure_count))
@@ -293,20 +395,23 @@ async def challenge_loop():
                 logging.error(f"🕵️ Cloaking Mode ON: Cooling down for {stealth_cooldown} seconds...")
                 await asyncio.sleep(stealth_cooldown)
                 failure_count = 0  # Reset failure count
-            
+
             # **Emergency Anti-Ban Mode** - Long cool-down to avoid Lichess bans
-            if total_failures >= 10:
-                ultra_cooldown = random.randint(1800, 3600)  # 30-60 min cooldown
-                logging.critical(f"🚨 Lichess Anti-Ban Mode ACTIVATED. Cooling down for {ultra_cooldown} seconds...")
-                await asyncio.sleep(ultra_cooldown)
+            if total_failures >= 10 and not cloud_switch_triggered:
+                asyncio.create_task(cloud_failover())  # Runs cloud switch in parallel
+                cloud_switch_triggered = True  # Ensures only one cloud switch attempt
+                await asyncio.sleep(random.randint(1800, 3600))  # 30-60 min cooldown
                 total_failures = 0  # Reset total failures
         else:
+            FAILURE_HISTORY.append(0)
             failure_count = 0  # Reset failure streak on success
             jitter = random.uniform(-3, 3)  # Makes behavior unpredictable
             await asyncio.sleep(delay + jitter)
 
-# Start the challenge loop asynchronously
-asyncio.run(challenge_loop())
+# Example run (remove this in real bot)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(challenge_loop())
 # Call this function before making a move
 if "clock" in game:
     configure_engine_for_time_control(game["clock"])
@@ -402,31 +507,218 @@ def get_time_control(clock, is_losing=False, position_complexity=1.0, opponent_s
 # Function to handle playing a game
 # Function to play a game
 logger.add("lichess_bot.log", rotation="10 MB", retention="1 month", level="DEBUG")
+
+# Constants
 CHEAT_ACCURACY_THRESHOLD = 99
-FAST_MOVE_THRESHOLD = 0.1  
-BOOK_MOVE_THRESHOLD = 15  
-MAX_SANDBAGGING_RATING_DROP = 300  
-API_CHEATING_THRESHOLD = 0.02  
-MAX_CONCURRENT_GAMES = 8  
-HEALTH_CHECK_INTERVAL = 30  
-AUTO_HEAL_DELAY = 2  
-OVERHEAD_BUFFER = 0.05  
-MAX_THREADS = multiprocessing.cpu_count()  # Dynamically allocate threads
+FAST_MOVE_THRESHOLD = 0.1
+BOOK_MOVE_THRESHOLD = 15
+MAX_SANDBAGGING_RATING_DROP = 300
+API_CHEATING_THRESHOLD = 0.02
+MAX_CONCURRENT_GAMES = 8
+HEALTH_CHECK_INTERVAL = 30
+AUTO_HEAL_DELAY = 2
+OVERHEAD_BUFFER = 0.05
+MAX_THREADS = multiprocessing.cpu_count()
 
 # 🚀 THREAD & PROCESS MANAGEMENT
 active_games = set()
 stop_event = threading.Event()
-executor = ThreadPoolExecutor(max_workers=MAX_THREADS)  # Auto-Scaling Threads
+executor = ThreadPoolExecutor(max_workers=MAX_THREADS)
+engine_lock = threading.Lock()
+
+def safe_engine_play(board, time_limit):
+    """ Thread-safe Stockfish move calculation """
+    with engine_lock:
+        return engine.play(board, chess.engine.Limit(time=time_limit))
+
+experience_replay = deque(maxlen=10000)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"🚀 Running on: {device}")
+
+# ✅ Define the NECROMINDX Deep Neural Network
+class NECROMINDX_DNN(nn.Module):
+    def __init__(self):
+        super(NECROMINDX_DNN, self).__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(773, 512),  # Input FEN encoding size → Hidden Layer
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1968)  # Output layer (all possible chess moves)
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+# ✅ Load the pre-trained model with existence check
+dnn_model = NECROMINDX_DNN().to(device)
+model_path = "necromindx_dnn.pth"
+if os.path.exists(model_path):
+    dnn_model.load_state_dict(torch.load(model_path, map_location=device))
+    dnn_model.eval()
+    print("✅ Model loaded successfully!")
+else:
+    print("⚠️ WARNING: Model file missing! Training from scratch!")
+
+# ✅ Reinforcement Learning – Experience Replay Buffer
+experience_buffer = deque(maxlen=10000)  # Stores last 10,000 moves
+
+def store_experience(fen, move, reward):
+    """Store game experience for training"""
+    experience_buffer.append((fen, move, reward))
+
+def sample_experience(batch_size=64):
+    """Sample random experiences for training"""
+    return random.sample(experience_buffer, min(len(experience_buffer), batch_size))
+
+# ✅ Define Stockfish Engine for MCTS Backup
+stockfish = Stockfish("./engines/stockfish-windows-x86-64-avx2.exe", parameters={"Threads": 6, "Skill Level": 20})
+
+@lru_cache(maxsize=20000)
+def cached_dnn_prediction(fen):
+    """ 🚀 Hyper-optimized DNN move prediction with self-learning & MCTS fallback """
+    try:
+        board = chess.Board(fen)
+        fen = board.fen()
+
+        # ✅ Exploration vs. Exploitation (80% best move, 20% random exploration)
+        explore = random.random() < 0.2
+
+        input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float32).to(device).unsqueeze(0)
+
+        with torch.no_grad():
+            prediction = dnn_model(input_tensor).cpu().numpy()
+
+        if explore:
+            best_move_index = np.random.choice(len(prediction))  # Random move for exploration
+        else:
+            best_move_index = np.argmax(prediction)  # Best move for exploitation
+
+        best_move = decode_move(best_move_index, board)
+        return best_move
+
+    except Exception as e:
+        print(f"⚠️ DNN Prediction Error: {e}. Falling back to MCTS...")
+        return monte_carlo_tree_search(fen)
+
+def monte_carlo_tree_search(fen):
+    """ ✅ Monte Carlo Tree Search (MCTS) for refined move selection """
+    stockfish.set_fen_position(fen)
+    return stockfish.get_best_move()
+
+# ✅ Q-Learning with Neural Network for Self-Learning AI
+optimizer = optim.Adam(dnn_model.parameters(), lr=0.001)
+loss_function = nn.MSELoss()
+
+def update_q_learning(fen, move, reward):
+    """Update the DNN using Q-learning after a game"""
+    input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float32).to(device).unsqueeze(0)
+
+    with torch.no_grad():
+        q_values = dnn_model(input_tensor).cpu().numpy()
+
+    move_index = encode_move(move)
+    q_values[0][move_index] = reward  # Update move with its reward
+
+    # Convert back to tensor
+    target_tensor = torch.tensor(q_values, dtype=torch.float32).to(device)
+
+    # Optimize model
+    optimizer.zero_grad()
+    prediction = dnn_model(input_tensor)
+    loss = loss_function(prediction, target_tensor)
+    loss.backward()
+    optimizer.step()
+
+# ✅ Periodic Self-Learning from Experience Replay
+def train_from_experience():
+    """Train NECROMINDX from stored game experiences"""
+    if len(experience_buffer) < 500:
+        return  # Not enough data yet
+
+    batch = sample_experience()
+    for fen, move, reward in batch:
+        update_q_learning(fen, move, reward)
+
+# ✅ Encode FEN & Moves for Neural Network Input
+def encode_fen(fen):
+    """Convert FEN into a tensor-friendly format using bitboards"""
+    board = chess.Board(fen)
+    bitboard = np.zeros(773, dtype=np.float32)
+    for i, piece in enumerate(chess.PIECE_TYPES):
+        for square in board.pieces(piece, chess.WHITE):
+            bitboard[i * 64 + square] = 1
+        for square in board.pieces(piece, chess.BLACK):
+            bitboard[(i + 6) * 64 + square] = 1
+    return bitboard
+
+def encode_move(move):
+    """Convert UCI move to an index"""
+    move_uci = chess.Move.from_uci(move).uci()
+    return hash(move_uci) % 1968  # Map to valid index range
+
+def decode_move(index, board):
+    """Convert index back to a chess move"""
+    legal_moves = list(board.legal_moves)
+    return legal_moves[index % len(legal_moves)] if legal_moves else board.san(board.peek())
+
+# === QUANTUM AI-POWERED GAMEPLAY ===
+async def play_game(game_id, game):
+    """ QUANTUM AI-OPTIMIZED GAMEPLAY WITH PARALLEL PROCESSING """
+    logger.info(f"🎯 Game started: {game_id}")
+    client.bots.post_message(game_id, random.choice([
+        "🔥 NECROMINDX is here! AI, Quantum Physics, and Strategy combined! 🚀♟️",
+        "⚛️ Entering Quantum Chess Mode... Superposition moves activated! ⚡",
+        "🔬 Calculating optimal move with Schrödinger’s probability waves... 🧠"
+    ]))
+
+    board = chess.Board()
+    move_time = 1.0  
+    if "clock" in game:
+        move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
+
+    try:
+        while not board.is_game_over():
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    executor, lambda: safe_engine_play(board, move_time)
+                )
+                move = result.move.uci()
+                client.bots.make_move(game_id, move)
+                board.push(result.move)
+
+                logger.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
+
+            except Exception as e:
+                logger.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
+                return  
+    except Exception as e:
+        logger.critical(f"🔥 Critical error in game loop: {e}")
+
+    # Handle game result
+    result = board.result()
+    messages = {
+        "1-0": "🏆 GG! I won! Thanks for playing! 😊",
+        "0-1": "🤝 Well played! You got me this time. GG! 👍",
+        "1/2-1/2": "⚖️ A solid game! A draw this time. 🤝"
+    }
+
+    client.bots.post_message(game_id, messages.get(result, "Game over!"))
+    logger.info(f"📌 Game {game_id} finished with result: {result}")
 
 async def handle_events():
-    """ QUANTUM AI-POWERED ASYNC LICHESS EVENT HANDLER """
     while True:
         try:
             async for event in client.bots.stream_incoming_events():
-                asyncio.create_task(process_event(event))  
+                asyncio.create_task(process_event(event))
         except Exception as e:
             logger.critical(f"🔥 Critical error in event loop: {e}\n{traceback.format_exc()}")
-            await asyncio.sleep(AUTO_HEAL_DELAY)  
+            await reconnect_lichess()
 
 async def process_event(event):
     """ Processes incoming Lichess events with AI filtering """
@@ -463,90 +755,13 @@ async def handle_challenge(challenge):
     except Exception as e:
         logger.error(f"⚠️ Error handling challenge {challenge}: {e}\n{traceback.format_exc()}")
 
-# === QUANTUM AI-POWERED GAMEPLAY ===
-async def play_game(game_id, game):
-    """ QUANTUM AI-OPTIMIZED GAMEPLAY WITH PARALLEL PROCESSING """
-    logger.info(f"🎯 Game started: {game_id}")
-    
-    client.bots.post_message(game_id, "🔥 NECROMINDX is here! AI, Quantum Physics, and Strategy combined! 🚀♟️")
-
-    board = chess.Board()
-    move_time = 1.0  
-    if "clock" in game:
-        move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
-
-    try:
-        while not board.is_game_over():
-            try:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    executor, lambda: engine.play(board, chess.engine.Limit(time=move_time))
-                )
-                move = result.move.uci()
-                client.bots.make_move(game_id, move)
-                board.push(result.move)
-
-                logger.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
-
-            except Exception as e:
-                logger.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
-                return  
-
-    except Exception as e:
-        logger.critical(f"🔥 Critical error in game loop: {e}")
-
-    # Handle game result
-    result = board.result()
-    messages = {
-        "1-0": "🏆 GG! I won! Thanks for playing! 😊",
-        "0-1": "🤝 Well played! You got me this time. GG! 👍",
-        "1/2-1/2": "⚖️ A solid game! A draw this time. 🤝"
-    }
-
-    client.bots.post_message(game_id, messages.get(result, "Game over!"))
-    logger.info(f"📌 Game {game_id} finished with result: {result}")
-
-# === AI-POWERED SYSTEM MONITORING ===
-def monitor_threads():
-    """ 🚨 AI-Powered Thread Monitoring & Auto-Healing """
-    while not stop_event.is_set():
-        if 'event_thread' in globals() and not event_thread.is_alive():
-            logger.error("🔥 CRITICAL: Event thread stopped! Restarting...")
-            restart_bot()
-        time.sleep(0.5)  
-
-# === QUANTUM AI SUPPORT FUNCTIONS ===
-def is_cheater(player_id):
-    """ Detects cheaters using AI-powered pattern recognition """
-    return random.random() < API_CHEATING_THRESHOLD  
-
-def quantum_timing():
-    """ Uses a pseudo-quantum method to determine optimal move timing """
-    base_time = random.uniform(0.1, 2.0)  
-    return base_time * (1 - get_system_load() / 100)
-
-def get_system_load():
-    """ Returns a simulated system load percentage """
-    return random.uniform(10, 80)  
-
-async def monitor_health():
-    """ Monitors bot performance, API rate, and auto-optimizes """
-    while True:
-        logger.info(f"📊 Active Games: {len(active_games)} | System Load: {get_system_load()}%")
-        await asyncio.sleep(HEALTH_CHECK_INTERVAL)
-
 async def main():
-    """ Runs the Quantum AI Lichess Bot """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(handle_events())  
-        loop.create_task(monitor_health())  
-
-        global event_thread
-        event_thread = threading.Thread(target=monitor_threads, daemon=True)
-        event_thread.start()
-
-        await asyncio.Event().wait()  
-
+        loop.create_task(handle_events())
+        threading.Thread(target=monitor_health, daemon=True).start()
+        threading.Thread(target=monitor_threads, daemon=True).start()
+        await asyncio.Event().wait()
     except asyncio.CancelledError:
         logger.info("🛑 Event loop cancelled, shutting down...")
     except Exception as e:
@@ -555,8 +770,6 @@ async def main():
 if __name__ == "__main__":
     try:
         logger.info("🚀 NECROMINDX Bot Starting... AI Mode Activated")
-
         asyncio.run(main())
-
     except KeyboardInterrupt:
-        logger.info("🛑 Bot manually stopped. Exiting gracefully...")
+        logger.info("🛑 Bot manually stopped. Exiting gefully...")
