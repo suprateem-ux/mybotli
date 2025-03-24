@@ -1,4 +1,4 @@
-racimport berserk
+import berserk
 import chess
 import logging
 import threading
@@ -668,48 +668,142 @@ def decode_move(index, board):
     return legal_moves[index % len(legal_moves)] if legal_moves else board.san(board.peek())
 
 # === QUANTUM AI-POWERED GAMEPLAY ===
+# Constants (add these at the top of your file)
+MIN_MOVE_TIME = 0.1  # Never use less than 0.1 seconds for a move
+MAX_ENGINE_RETRIES = 3  # Max retries for engine failures
+ENGINE_TIMEOUT = 10.0  # Max seconds for engine analysis
+
 async def play_game(game_id, game):
-    """ QUANTUM AI-OPTIMIZED GAMEPLAY WITH PARALLEL PROCESSING """
+    """Enhanced quantum AI gameplay with all requested improvements"""
+    # Initialization
     logger.info(f"🎯 Game started: {game_id}")
-    client.bots.post_message(game_id, random.choice([
-        "🔥 NECROMINDX is here! AI, Quantum Physics, and Strategy combined! 🚀♟️",
-        "⚛️ Entering Quantum Chess Mode... Superposition moves activated! ⚡",
-        "🔬 Calculating optimal move with Schrödinger’s probability waves... 🧠"
-    ]))
+    opponent_title = game.get("opponent", {}).get("title", "")
+    opponent_is_bot = opponent_title == "BOT"
+    
+    # Custom greeting based on opponent type
+    greeting = random.choice([
+        f"🚀 Warping into a relativistic chess duel against {opponent_title or 'opponent'}!" if not opponent_is_bot else
+        "🤖 Quantum circuits engaged! AI singularity showdown begins!",
+        f"⚛️ Observing {opponent_title}'s wavefunction collapse... The game begins!" if opponent_title else
+        "🌀 Entering a quantum chess superposition... Where will reality settle?"
+    ])
+    await client.bots.post_message(game_id, greeting)
 
     board = chess.Board()
-    move_time = 1.0  
-    if "clock" in game:
-        move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
+    game_over = False
 
     try:
-        while not board.is_game_over():
+        while not game_over:
+            # --- Improved Draw Handling ---
             try:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    executor, lambda: safe_engine_play(board, move_time)
-                )
-                move = result.move.uci()
-                client.bots.make_move(game_id, move)
-                board.push(result.move)
-
-                logger.info(f"♟️ Move: {move} | ⏳ Time used: {move_time:.2f}s | FEN: {board.fen()}")
-
+                game_state = await client.games.get_ongoing(game_id)
+                if game_state.get("opponentOffersDraw", False):
+                    if await should_accept_draw(board, game_state, opponent_is_bot):
+                        await client.bots.accept_draw(game_id)
+                        game_over = True
+                        continue
             except Exception as e:
-                logger.error(f"🚨 Move Error: {e} | Board FEN: {board.fen()}")
-                return  
+                logger.error(f"⚠️ Draw check error: {e}")
+
+            # --- Enhanced Move Handling ---
+            move_success = False
+            last_exception = None
+            
+            for attempt in range(MAX_ENGINE_RETRIES):
+                try:
+                    # Calculate safe move time
+                    move_time = max(
+                        MIN_MOVE_TIME,
+                        get_time_control(game["clock"], False) - OVERHEAD_BUFFER
+                    )
+                    
+                    # Non-blocking engine analysis
+                    result = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            executor,
+                            lambda: safe_engine_play(board, move_time)
+                        ),
+                        timeout=ENGINE_TIMEOUT
+                    )
+                    
+                    await client.bots.make_move(game_id, result.move.uci())
+                    board.push(result.move)
+                    move_success = True
+                    break
+                    
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(f"⚠️ Move attempt {attempt + 1} failed: {e}")
+                    if attempt == MAX_ENGINE_RETRIES - 1:
+                        # Fallback to legal move if engine fails
+                        fallback_move = random.choice(list(board.legal_moves))
+                        await client.bots.make_move(game_id, fallback_move.uci())
+                        board.push(fallback_move)
+                        logger.error(f"🚨 Engine failed! Played fallback move: {fallback_move.uci()}")
+
+            # --- Game Over Check ---
+            if board.is_game_over():
+                game_over = True
+
     except Exception as e:
-        logger.critical(f"🔥 Critical error in game loop: {e}")
+        logger.critical(f"🔥 Game loop crashed: {e}\n{traceback.format_exc()}")
+    finally:
+        await handle_game_end(game_id, board, opponent_title, opponent_is_bot)
 
-    # Handle game result
+async def should_accept_draw(board, game_state, opponent_is_bot):
+    """Enhanced draw acceptance logic"""
+    if not opponent_is_bot:
+        return False
+        
+    my_rating = game_state.get("player", {}).get("rating", 0)
+    opponent_rating = game_state.get("opponent", {}).get("rating", 0)
+    
+    # Rating filter
+    if abs(my_rating - opponent_rating) > 100:
+        return False
+    
+    # Position evaluation
+    try:
+        with engine_lock:
+            eval = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    lambda: engine.analyse(board, chess.engine.Limit(depth=12))["score"].relative.score()
+                ),
+                timeout=5.0
+            )
+        return abs(eval) < 50
+    except:
+        return False
+
+async def handle_game_end(game_id, board, opponent_title, opponent_is_bot):
+    """Enhanced game end handling"""
     result = board.result()
+    
+    # Custom messages based on opponent type and result
     messages = {
-        "1-0": "🏆 GG! I won! Thanks for playing! 😊",
-        "0-1": "🤝 Well played! You got me this time. GG! 👍",
-        "1/2-1/2": "⚖️ A solid game! A draw this time. 🤝"
+        "1-0": [
+            f"🚀 Achieved quantum supremacy vs {opponent_title}! Spacetime bent in my favor!" if not opponent_is_bot else
+            "🤖 Quantum fluctuations eliminated silicon adversary! GG!",
+            f"⚛️ My pieces tunneled through {opponent_title}'s defenses!" if opponent_title else
+            "🌌 Quantum computation complete! The position collapsed into a win!"
+        ],
+        "0-1": [
+            f"🕳️ Got pulled into {opponent_title}'s gravitational trap! Event horizon reached!" if not opponent_is_bot else
+            "🤖 AI singularity surpassed me... Must recalibrate my neural network!",
+            "🔻 Entropy won this time… The multiverse chose an alternate timeline!"
+        ],
+        "1/2-1/2": [
+            f"⚖️ Quantum decoherence achieved... The battle exists in a superposition of wins and losses!" if not opponent_is_bot else
+            "🤖 AI equilibrium reached—our quantum circuits cancel out!",
+            "🌠 A draw... or did we just split into parallel universes where both won?"
+        ]
     }
-
-    client.bots.post_message(game_id, messages.get(result, "Game over!"))
-    logger.info(f"📌 Game {game_id} finished with result: {result}")
+    
+    # Select random appropriate message
+    message = random.choice(messages.get(result, ["Game completed"]))
+    await client.bots.post_message(game_id, message)
+    logger.info(f"📌 Game ended: {result} vs {opponent_title or 'opponent'}")
 
 async def handle_events():
     while True:
