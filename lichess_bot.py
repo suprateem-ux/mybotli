@@ -155,6 +155,7 @@ ENGINE_CONFIGS = {
         "Use NNUE": False,
         "MultiPV": 1,
         "Hash": min(64, TOTAL_RAM // 4),
+        "Use Book": True,
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
         "Best Book move": True,
         "Book Depth": 6,
@@ -167,17 +168,19 @@ ENGINE_CONFIGS = {
     },
     "blitz": {
         "Nodes": 600000,
-        "Depth": 20,
+        "Depth": 18,
         "Move Overhead": 180,
         "Threads": max(2, CPU_CORES // 3),
         "Ponder": True,
         "Use NNUE": True,
         "MultiPV": 2,
         "Hash": min(512, TOTAL_RAM // 2),
+        "Use Book": True,
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
+        "Use Book": True
         "Best Book move": True,
         "Book Depth": 12,
-        "Book Variety": 40,
+        "Book Variety": 20,
         "SyzygyProbeDepth": min(2, TOTAL_RAM // 8192),
         "SyzygyPath": "https://tablebase.lichess.ovh",
         "AutoLagCompensation": True
@@ -191,6 +194,7 @@ ENGINE_CONFIGS = {
         "Use NNUE": True,
         "MultiPV": 3,
         "Hash": min(4096, TOTAL_RAM // 1.5),
+        "Use Book": True,
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
         "Best Book move": True,
         "Book Depth": 15,
@@ -208,10 +212,11 @@ ENGINE_CONFIGS = {
         "Use NNUE": True,
         "MultiPV": 4,
         "Hash": min(6144, TOTAL_RAM),
+        "Use Book": True,
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
         "Best Book move": True,
         "Book Depth": 20,
-        "Book Variety": 50,
+        "Book Variety": 55,
         "SyzygyProbeDepth": min(6, TOTAL_RAM // 8192),
         "SyzygyPath": "https://tablebase.lichess.ovh",
         "AutoLagCompensation": True
@@ -420,16 +425,16 @@ if "clock" in game:
 # The most insane Quantum-AI-driven time control system ever. 
 
 # Hyper-optimized settings for ultimate performance
-OVERHEAD_BUFFER = 0.07  # Ultra-precise buffer to avoid flagging
+OVERHEAD_BUFFER = 0.06  # Ultra-precise buffer to avoid flagging
 MAX_THINK_TIME = 5.5  # Absolute maximum time per move
 PHASE_BOOST = 1.45  # Extra calculation for complex positions
-MOMENTUM_FACTOR = 1.6  # Boosts time when attacking
+MOMENTUM_FACTOR = 1.4  # Boosts time when attacking
 ANTI_TILT_FACTOR = 1.35  # Prevents tilt by adjusting timing dynamically
 ENDGAME_BOOST = 2.0  # Maximum precision in critical endgames
 SPEED_ADJUSTMENT = 0.6  # Adapts based on opponent's move speed
-AGGRESSIVE_MODE = 1.3  # Expands time when in winning positions
+AGGRESSIVE_MODE = 1.4  # Expands time when in winning positions
 DEFENSE_MODE = 0.5  # Conserves time when in losing positions
-TEMPO_PRESSURE = 0.8  # Forces mistakes by playing faster at key moments
+TEMPO_PRESSURE = 0.85  # Forces mistakes by playing faster at key moments
 
 # Optimized base think time for each time control format
 THINK_TIME = {
@@ -509,7 +514,7 @@ def get_time_control(clock, is_losing=False, position_complexity=1.0, opponent_s
 logger.add("lichess_bot.log", rotation="10 MB", retention="1 month", level="DEBUG")
 
 # Constants
-CHEAT_ACCURACY_THRESHOLD = 99
+CHEAT_ACCURACY_THRESHOLD = 97
 FAST_MOVE_THRESHOLD = 0.1
 BOOK_MOVE_THRESHOLD = 15
 MAX_SANDBAGGING_RATING_DROP = 300
@@ -517,7 +522,7 @@ API_CHEATING_THRESHOLD = 0.02
 MAX_CONCURRENT_GAMES = 8
 HEALTH_CHECK_INTERVAL = 30
 AUTO_HEAL_DELAY = 2
-OVERHEAD_BUFFER = 0.05
+OVERHEAD_BUFFER = 0.06
 MAX_THREADS = multiprocessing.cpu_count()
 
 # 🚀 THREAD & PROCESS MANAGEMENT
@@ -535,27 +540,41 @@ experience_replay = deque(maxlen=10000)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"🚀 Running on: {device}")
-
-# ✅ Define the NECROMINDX Deep Neural Network
 class NECROMINDX_DNN(nn.Module):
     def __init__(self):
         super(NECROMINDX_DNN, self).__init__()
         self.layers = nn.Sequential(
-            nn.Linear(773, 512),  # Input FEN encoding size → Hidden Layer
-            nn.ReLU(),
+            nn.Linear(773, 1024),
+            nn.BatchNorm1d(1024),
+            nn.LeakyReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(1024, 512),
+            nn.BatchNorm1d(512),
+            nn.LeakyReLU(),
+            nn.Dropout(0.2),
             nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(256, 128),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(128, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 1968)  # Output layer (all possible chess moves)
         )
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                module.bias.data.fill_(0.01)
 
     def forward(self, x):
         return self.layers(x)
 
-# ✅ Load the pre-trained model with existence check
+# ✅ Device Selection
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"🚀 Running on: {device}")
+
 dnn_model = NECROMINDX_DNN().to(device)
 model_path = "necromindx_dnn.pth"
 if os.path.exists(model_path):
@@ -565,91 +584,18 @@ if os.path.exists(model_path):
 else:
     print("⚠️ WARNING: Model file missing! Training from scratch!")
 
-# ✅ Reinforcement Learning – Experience Replay Buffer
-experience_buffer = deque(maxlen=10000)  # Stores last 10,000 moves
+# ✅ TorchScript Compilation for Speed
+dnn_model = torch.jit.script(dnn_model)
 
-def store_experience(fen, move, reward):
-    """Store game experience for training"""
-    experience_buffer.append((fen, move, reward))
+# ✅ Experience Replay Buffer
+experience_buffer = deque(maxlen=20000)
+precomputed_moves = {}
+engine_lock = Lock()
 
-def sample_experience(batch_size=64):
-    """Sample random experiences for training"""
-    return random.sample(experience_buffer, min(len(experience_buffer), batch_size))
-
-# ✅ Define Stockfish Engine for MCTS Backup
-stockfish = Stockfish("./engines/stockfish-windows-x86-64-avx2.exe", parameters={"Threads": 6, "Skill Level": 20})
-
-@lru_cache(maxsize=20000)
-def cached_dnn_prediction(fen):
-    """ 🚀 Hyper-optimized DNN move prediction with self-learning & MCTS fallback """
-    try:
-        board = chess.Board(fen)
-        fen = board.fen()
-
-        # ✅ Exploration vs. Exploitation (80% best move, 20% random exploration)
-        explore = random.random() < 0.2
-
-        input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float32).to(device).unsqueeze(0)
-
-        with torch.no_grad():
-            prediction = dnn_model(input_tensor).cpu().numpy()
-
-        if explore:
-            best_move_index = np.random.choice(len(prediction))  # Random move for exploration
-        else:
-            best_move_index = np.argmax(prediction)  # Best move for exploitation
-
-        best_move = decode_move(best_move_index, board)
-        return best_move
-
-    except Exception as e:
-        print(f"⚠️ DNN Prediction Error: {e}. Falling back to MCTS...")
-        return monte_carlo_tree_search(fen)
-
-def monte_carlo_tree_search(fen):
-    """ ✅ Monte Carlo Tree Search (MCTS) for refined move selection """
-    stockfish.set_fen_position(fen)
-    return stockfish.get_best_move()
-
-# ✅ Q-Learning with Neural Network for Self-Learning AI
-optimizer = optim.Adam(dnn_model.parameters(), lr=0.001)
-loss_function = nn.MSELoss()
-
-def update_q_learning(fen, move, reward):
-    """Update the DNN using Q-learning after a game"""
-    input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float32).to(device).unsqueeze(0)
-
-    with torch.no_grad():
-        q_values = dnn_model(input_tensor).cpu().numpy()
-
-    move_index = encode_move(move)
-    q_values[0][move_index] = reward  # Update move with its reward
-
-    # Convert back to tensor
-    target_tensor = torch.tensor(q_values, dtype=torch.float32).to(device)
-
-    # Optimize model
-    optimizer.zero_grad()
-    prediction = dnn_model(input_tensor)
-    loss = loss_function(prediction, target_tensor)
-    loss.backward()
-    optimizer.step()
-
-# ✅ Periodic Self-Learning from Experience Replay
-def train_from_experience():
-    """Train NECROMINDX from stored game experiences"""
-    if len(experience_buffer) < 500:
-        return  # Not enough data yet
-
-    batch = sample_experience()
-    for fen, move, reward in batch:
-        update_q_learning(fen, move, reward)
-
-# ✅ Encode FEN & Moves for Neural Network Input
+# ✅ Optimized Move Encoding
 def encode_fen(fen):
-    """Convert FEN into a tensor-friendly format using bitboards"""
     board = chess.Board(fen)
-    bitboard = np.zeros(773, dtype=np.float32)
+    bitboard = np.zeros(773, dtype=np.float16)
     for i, piece in enumerate(chess.PIECE_TYPES):
         for square in board.pieces(piece, chess.WHITE):
             bitboard[i * 64 + square] = 1
@@ -658,153 +604,147 @@ def encode_fen(fen):
     return bitboard
 
 def encode_move(move):
-    """Convert UCI move to an index"""
-    move_uci = chess.Move.from_uci(move).uci()
-    return hash(move_uci) % 1968  # Map to valid index range
+    return hash(chess.Move.from_uci(move).uci()) % 1968
 
 def decode_move(index, board):
-    """Convert index back to a chess move"""
     legal_moves = list(board.legal_moves)
     return legal_moves[index % len(legal_moves)] if legal_moves else board.san(board.peek())
 
-# === QUANTUM AI-POWERED GAMEPLAY ===
-# Constants (add these at the top of your file)
-MIN_MOVE_TIME = 0.1  # Never use less than 0.1 seconds for a move
-MAX_ENGINE_RETRIES = 3  # Max retries for engine failures
-ENGINE_TIMEOUT = 10.0  # Max seconds for engine analysis
+# ✅ Optimized Stockfish Engine
+stockfish = Stockfish("./engines/stockfish-windows-x86-64-avx2.exe", parameters={
+    "Threads": 6,
+    "Skill Level": 20,
+    "Move Overhead": 20,
+    "Minimum Thinking Time": 10
+})
 
+def monte_carlo_tree_search(fen):
+    stockfish.set_fen_position(fen)
+    return stockfish.get_best_move()
+
+# ✅ Neural Network Move Prediction
+@lru_cache(maxsize=20000)
+def cached_dnn_prediction(fen):
+    try:
+        cached_move = precomputed_moves.get(fen, None)
+        if cached_move:
+            return cached_move
+
+        board = chess.Board(fen)
+        input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float16).to(device).unsqueeze(0)
+
+        with torch.no_grad():
+            prediction = dnn_model(input_tensor).cpu().numpy()
+
+        best_move_index = np.argmax(prediction)
+        best_move = decode_move(best_move_index, board)
+
+        precomputed_moves[fen] = best_move
+        return best_move
+    except Exception as e:
+        print(f"⚠️ DNN Error: {e}. Falling back to MCTS...")
+        return monte_carlo_tree_search(fen)
+
+# ✅ Q-Learning with Batch Updates
+optimizer = optim.Adam(dnn_model.parameters(), lr=0.0003)
+loss_function = nn.MSELoss()
+
+def update_q_learning(fen, move, reward):
+    input_tensor = torch.tensor(encode_fen(fen), dtype=torch.float16).to(device).unsqueeze(0)
+    with torch.no_grad():
+        q_values = dnn_model(input_tensor).cpu().numpy()
+    move_index = encode_move(move)
+    q_values[0][move_index] = reward
+    target_tensor = torch.tensor(q_values, dtype=torch.float16).to(device)
+    optimizer.zero_grad()
+    loss = loss_function(dnn_model(input_tensor), target_tensor)
+    loss.backward()
+    optimizer.step()
+
+def train_from_experience():
+    if len(experience_buffer) < 500:
+        return
+    batch = random.sample(experience_buffer, 128)
+    fens, moves, rewards = zip(*batch)
+    input_tensor = torch.tensor([encode_fen(f) for f in fens], dtype=torch.float16).to(device)
+    target_values = torch.tensor(rewards, dtype=torch.float16).to(device)
+    optimizer.zero_grad()
+    loss = loss_function(dnn_model(input_tensor).squeeze(), target_values)
+    loss.backward()
+    optimizer.step()
+
+# ✅ Ultimate Gameplay Loop
 async def play_game(game_id, game):
-    """Enhanced quantum AI gameplay with all requested improvements"""
-    # Initialization
+    """Ultimate AI-powered gameplay loop"""
+    print(f"🎯 Game started: {game_id}")
     logger.info(f"🎯 Game started: {game_id}")
-    opponent_title = game.get("opponent", {}).get("title", "")
-    opponent_is_bot = opponent_title == "BOT"
-    
-    # Custom greeting based on opponent type
-    greeting = random.choice([
-        f"🚀 Warping into a relativistic chess duel against {opponent_title or 'opponent'}!" if not opponent_is_bot else
-        "🤖 Quantum circuits engaged! AI singularity showdown begins!",
-        f"⚛️ Observing {opponent_title}'s wavefunction collapse... The game begins!" if opponent_title else
-        "🌀 Entering a quantum chess superposition... Where will reality settle?"
-    ])
-    await client.bots.post_message(game_id, greeting)
+
+    opponent_title = game["opponent"].get("title", "")
+    opponent_name = game["opponent"]["username"]
+
+    quantum_messages = [
+        f"🔥 NECROMINDX has emerged from the quantum void! {opponent_title} {opponent_name}, prepare for a battle across spacetime! 🚀♟️",
+        f"⚛️ Activating Quantum Neural Nexus... {opponent_title} {opponent_name}, let’s see if your calculations hold up in the multiverse! ⚡",
+        f"🧠 Engaging Hyperdimensional Chess Grid... {opponent_title} {opponent_name}, brace yourself for moves beyond classical reality! 🌌",
+        f"🕰️ Time Dilation Initialized! {opponent_title} {opponent_name}, in this game, seconds are relative, but checkmate is absolute! ⏳♟️",
+        f"🔗 Unlocking the Quantum Entanglement Gambit... {opponent_title} {opponent_name}, your pieces are now in a superposition of defeat! 🌀♟️",
+        f"🔬 Running Feynman’s Quantum Chess Algorithms... {opponent_title} {opponent_name}, let’s see if your brainwaves can outcalculate AI! 🧠⚛️",
+        f"🚀 Engaging the Kasparov-Hawking Paradox! {opponent_title} {opponent_name}, in this dimension, my eval wavefunction warps reality! ♟️🔮",
+    ]
+
+    await client.bots.post_message(game_id, random.choice(quantum_messages))
 
     board = chess.Board()
-    game_over = False
+    move_time = 1.0  # Default move time
+
+    if "clock" in game:
+        move_time = get_time_control(game["clock"], False) - OVERHEAD_BUFFER
+
+    is_hyperbullet = game["clock"]["initial"] <= 60 and game["clock"]["increment"] == 0
 
     try:
-        while not game_over:
-            # --- Improved Draw Handling ---
-            try:
-                game_state = await client.games.get_ongoing(game_id)
-                if game_state.get("opponentOffersDraw", False):
-                    if await should_accept_draw(board, game_state, opponent_is_bot):
-                        await client.bots.accept_draw(game_id)
-                        game_over = True
-                        continue
-            except Exception as e:
-                logger.error(f"⚠️ Draw check error: {e}")
+        while not board.is_game_over():
+            fen = board.fen()
 
-            # --- Enhanced Move Handling ---
-            move_success = False
-            last_exception = None
-            
-            for attempt in range(MAX_ENGINE_RETRIES):
+            if is_hyperbullet:
+                print("⚡ Hyperbullet detected! Skipping DNN and using Stockfish only.")
+                best_move = stockfish.get_best_move()  # Use pure Stockfish, no DNN
+            else:
                 try:
-                    # Calculate safe move time
-                    move_time = max(
-                        MIN_MOVE_TIME,
-                        get_time_control(game["clock"], False) - OVERHEAD_BUFFER
-                    )
-                    
-                    # Non-blocking engine analysis
-                    result = await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            executor,
-                            lambda: safe_engine_play(board, move_time)
-                        ),
-                        timeout=ENGINE_TIMEOUT
-                    )
-                    
-                    await client.bots.make_move(game_id, result.move.uci())
-                    board.push(result.move)
-                    move_success = True
-                    break
-                    
+                    best_move = cached_dnn_prediction(fen)  # Use DNN for normal games
                 except Exception as e:
-                    last_exception = e
-                    logger.warning(f"⚠️ Move attempt {attempt + 1} failed: {e}")
-                    if attempt == MAX_ENGINE_RETRIES - 1:
-                        # Fallback to legal move if engine fails
-                        fallback_move = random.choice(list(board.legal_moves))
-                        await client.bots.make_move(game_id, fallback_move.uci())
-                        board.push(fallback_move)
-                        logger.error(f"🚨 Engine failed! Played fallback move: {fallback_move.uci()}")
+                    logger.error(f"🚨 DNN Error: {e} | Falling back to Stockfish.")
+                    best_move = stockfish.get_best_move()
 
-            # --- Game Over Check ---
-            if board.is_game_over():
-                game_over = True
+            # Execute the move
+            board.push(best_move)
+            print(f"✅ Move played: {best_move}")
+            logger.info(f"✅ Move: {best_move} | FEN: {board.fen()}")
+
+            # Store experience for learning (only for non-hyperbullet games)
+            if not is_hyperbullet:
+                experience_buffer.append((fen, best_move.uci(), 0))
+
+                # Train AI periodically
+                if random.random() < 0.1:
+                    train_from_experience()
+
+            # Submit the move
+            await client.bots.make_move(game_id, best_move.uci())
 
     except Exception as e:
-        logger.critical(f"🔥 Game loop crashed: {e}\n{traceback.format_exc()}")
-    finally:
-        await handle_game_end(game_id, board, opponent_title, opponent_is_bot)
-
-async def should_accept_draw(board, game_state, opponent_is_bot):
-    """Enhanced draw acceptance logic"""
-    if not opponent_is_bot:
-        return False
-        
-    my_rating = game_state.get("player", {}).get("rating", 0)
-    opponent_rating = game_state.get("opponent", {}).get("rating", 0)
+        logger.critical(f"🔥 Critical error in game loop: {e}")
     
-    # Rating filter
-    if abs(my_rating - opponent_rating) > 100:
-        return False
-    
-    # Position evaluation
-    try:
-        with engine_lock:
-            eval = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    executor,
-                    lambda: engine.analyse(board, chess.engine.Limit(depth=12))["score"].relative.score()
-                ),
-                timeout=5.0
-            )
-        return abs(eval) < 50
-    except:
-        return False
-
-async def handle_game_end(game_id, board, opponent_title, opponent_is_bot):
-    """Enhanced game end handling"""
+    # Handle game result
     result = board.result()
-    
-    # Custom messages based on opponent type and result
     messages = {
-        "1-0": [
-            f"🚀 Achieved quantum supremacy vs {opponent_title}! Spacetime bent in my favor!" if not opponent_is_bot else
-            "🤖 Quantum fluctuations eliminated silicon adversary! GG!",
-            f"⚛️ My pieces tunneled through {opponent_title}'s defenses!" if opponent_title else
-            "🌌 Quantum computation complete! The position collapsed into a win!"
-        ],
-        "0-1": [
-            f"🕳️ Got pulled into {opponent_title}'s gravitational trap! Event horizon reached!" if not opponent_is_bot else
-            "🤖 AI singularity surpassed me... Must recalibrate my neural network!",
-            "🔻 Entropy won this time… The multiverse chose an alternate timeline!"
-        ],
-        "1/2-1/2": [
-            f"⚖️ Quantum decoherence achieved... The battle exists in a superposition of wins and losses!" if not opponent_is_bot else
-            "🤖 AI equilibrium reached—our quantum circuits cancel out!",
-            "🌠 A draw... or did we just split into parallel universes where both won?"
-        ]
+        "1-0": "🏆 GG! I won! Thanks for playing! 😊",
+        "0-1": "🤝 Well played! You got me this time. GG! 👍",
+        "1/2-1/2": "⚖️ A solid game! A draw this time. 🤝"
     }
-    
-    # Select random appropriate message
-    message = random.choice(messages.get(result, ["Game completed"]))
-    await client.bots.post_message(game_id, message)
-    logger.info(f"📌 Game ended: {result} vs {opponent_title or 'opponent'}")
 
+    await client.bots.post_message(game_id, messages.get(result, "Game over!"))
+    logger.info(f"📌 Game {game_id} finished with result: {result}")
 async def handle_events():
     while True:
         try:
