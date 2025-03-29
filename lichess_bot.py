@@ -63,16 +63,14 @@ except Exception as e:
     logger.critical(f"❌ Lichess API connection failed: {e}")
     raise
 
-# 🔥 Initialize Stockfish Engine (Fix the 'engine' error)
-try:
+async def initialize_stockfish():
     global engine  # ✅ Declare as global
-    engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-    logger.info("✅ Stockfish engine initialized successfully!")
-except Exception as e:
-    logger.critical(f"❌ Failed to initialize Stockfish: {e}")
-    raise 
-
-
+    try:
+        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        logger.info("✅ Stockfish engine initialized successfully!")
+    except Exception as e:
+        logger.critical(f"❌ Failed to initialize Stockfish: {e}")
+        raise 
 
 
 
@@ -160,10 +158,6 @@ ENGINE_CONFIGS = {
         "Best Book move": True,
         "Book Depth": 6,
         "Book Variety": 25,
-        "SyzygyProbeDepth": min(1, TOTAL_RAM // 8192),
-        "SyzygyProbeLimit": 7,
-        "AutoLagCompensation": True,
-        "SyzygyPath": "https://tablebase.lichess.ovh",
         "BlunderDetection": True
     },
     "blitz": {
@@ -177,7 +171,6 @@ ENGINE_CONFIGS = {
         "Hash": min(512, TOTAL_RAM // 2),
         "Use Book": True,
         "Book File": "C:/Users/Admin/Downloads/torom-boti/torom-boti/Perfect2023.bin",
-        "Use Book": True,
         "Best Book move": True,
         "Book Depth": 12,
         "Book Variety": 20,
@@ -414,13 +407,25 @@ async def challenge_loop():
             await asyncio.sleep(delay + jitter)
 
 # Example run (remove this in real bot)
+
+async def main():
+    await initialize_stockfish()  # Ensure Stockfish is initialized first
+    await challenge_loop()  # Start handling games
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(challenge_loop())
-# Call this function before making a move
-if "clock" in game:
-    configure_engine_for_time_control(game["clock"])
 
+    try:
+        asyncio.run(main())  # Safe execution in standard environments
+    except RuntimeError:  # Handles cases where an event loop is already running
+        loop = asyncio.new_event_loop()  # Create a new event loop
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
+
+# Call this function before making a move
+def handle_move(game):
+    if "clock" in game:
+        configure_engine_for_time_control(game["clock"])
 # TIME MANAGEMENT SYSTEM 🚀♟️
 # The most insane Quantum-AI-driven time control system ever. 
 
@@ -610,19 +615,38 @@ def decode_move(index, board):
     legal_moves = list(board.legal_moves)
     return legal_moves[index % len(legal_moves)] if legal_moves else board.san(board.peek())
 
-# ✅ Optimized Stockfish Engine
-stockfish = Stockfish("./engines/stockfish-windows-x86-64-avx2.exe", parameters={
-    "Threads": 6,
-    "Skill Level": 20,
-    "Move Overhead": 20,
-    "Minimum Thinking Time": 10
-})
 
 def monte_carlo_tree_search(fen):
-    stockfish.set_fen_position(fen)
-    return stockfish.get_best_move()
+    board = chess.Board(fen)
+    
+    # Try getting the best move from Stockfish
+    try:
+        result = engine.play(board, chess.engine.Limit(time=0.1))  # Adjust time as needed
+        return result.move.uci()
+    except Exception as e:
+        logger.warning(f"⚠️ Stockfish MCTS failed: {e}, evaluating strongest move from legal moves!")
 
-# ✅ Neural Network Move Prediction
+    legal_moves = list(board.legal_moves)
+    if not legal_moves:
+        return None  # No moves available (checkmate or stalemate)
+
+    best_eval = -float("inf")
+    best_fallback_move = None
+
+    for move in legal_moves:
+        board.push(move)  # Make the move
+
+        # Analyze position after making the move
+        analysis = engine.analyse(board, chess.engine.Limit(depth=min(15, max_time * 2)))
+        eval_score = analysis["score"].relative.score(mate_score=10000)  # Convert mate scores
+
+        if eval_score > best_eval:
+            best_eval = eval_score
+            best_fallback_move = move
+
+        board.pop()  # Undo move
+
+    return best_fallback_move.uci() if best_fallback_move else None
 @lru_cache(maxsize=20000)
 def cached_dnn_prediction(fen):
     try:
