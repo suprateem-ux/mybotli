@@ -26,7 +26,7 @@ from stockfish import Stockfish
 import torch
 from threading import Lock
 from multiprocessing import Lock
-
+import requests
 
 # Configuration
 TOKEN = os.getenv("LICHESS_API_TOKEN)
@@ -39,7 +39,7 @@ print(f"✅ API Token Loaded: {TOKEN[:5]}******")  # Hide most of the token for 
 STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Adjust path if needed
 
 if not os.path.exists(STOCKFISH_PATH):
-    print("⚠️ Stockfish not found! Downloading Stockfish 17...")
+    print("⚠️ Stockfish not found! Downloading Stockfish 17.1...")
 
     url = "https://github.com/official-stockfish/Stockfish/releases/download/sf_17/stockfish-windows-x86-64-avx2.exe"
     os.makedirs("engines", exist_ok=True)
@@ -64,16 +64,27 @@ except Exception as e:
     raise
 
 async def initialize_stockfish():
-    global engine, stockfish
-    try:
-        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-        stockfish = Stockfish(path=STOCKFISH_PATH)  # Initialize both engines
-        logger.info("✅ Engines initialized!")
-    except Exception as e:
-        logger.critical(f"❌ Engine init failed: {e}")
-        raise
+    """Initialize a pool of Stockfish engines asynchronously."""
+    global engine, engine_pool, engine_lock  # ✅ Added global `engine`
 
-# call bot
+    if not os.path.exists(STOCKFISH_PATH):
+        logging.critical(f"🚨 Stockfish binary not found at: {STOCKFISH_PATH}")
+        return False
+
+    try:
+        engine_pool = [
+            chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+            for _ in range(3)  # Create a pool of 3 engines
+        ]
+        engine_lock = threading.Lock()  # Add lock for safe access
+
+        engine = engine_pool[0]  # ✅ Set a default engine (first in pool)
+
+        logging.info("✅ Engine pool initialized with 3 Stockfish instances!")
+        return True
+    except Exception as e:
+        logging.critical(f"❌ Engine init failed: {e}")
+        return False# call bot
 def get_active_bots():
     """Fetches a list of currently online Lichess bots."""
     bot_ids = ["raspfish", "endogenetic-bot", "Nikitosik-ai", "botyuliirma", "exogenetic-bot","EnergyOfBeingBot"]
@@ -241,47 +252,40 @@ ENGINE_CONFIGS = {
     }
 }
 
+#
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Global variables
 engine = None  # Initialize the engine globally
 STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Replace with the actual path to Stockfish
-def configure_engine_for_time_control(time_control):
-    """Dynamically configure Stockfish settings based on game time."""
-    global engine
+current_analysis = None
+analysis_thread = None
+engine_lock = threading.Lock()  # Ensure safe access to engines
 
-    # Input validation
-    if not isinstance(time_control, (int, float)) or time_control < 0:
-        raise ValueError("time_control must be a non-negative number")
+def _start_parallel_analysis(board):
+    """Start deep Stockfish analysis in a background thread."""
+    def analysis_task():
+        global current_analysis
+        with engine_lock:
+            engine = random.choice(engine_pool)
+            current_analysis = engine.analyse(
+                board,
+                chess.engine.Limit(depth=18),
+                multipv=2
+            )
+    
+    global analysis_thread
+    analysis_thread = threading.Thread(target=analysis_task, daemon=True)
+    analysis_thread.start()
 
-    # Initialize failed_options list
-    failed_options = []
-
-    # Ensure engine is initialized
-    if engine is None:
-        logger.error("❌ Stockfish engine is not initialized! Call initialize_stockfish() first.")
-        return
-
-    # Determine settings based on time control
-    if time_control <= 30:
-        config = ENGINE_CONFIGS["hyperbullet"]
-    elif time_control <= 180:
-        config = ENGINE_CONFIGS["blitz"]
-    elif time_control <= 600:
-        config = ENGINE_CONFIGS["rapid"]
-    else:
-        config = ENGINE_CONFIGS["classical"]
-
-       
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Global variables
-engine = None  # Initialize the engine globally
-STOCKFISH_PATH = "./engines/stockfish-windows-x86-64-avx2.exe"  # Replace with the actual path to Stockfish
+def _get_latest_analysis(board):
+    """Fetch latest analysis or fallback to quick eval."""
+    if current_analysis is None:
+        with engine_lock:
+            engine = random.choice(engine_pool)
+            return engine.analyse(board, chess.engine.Limit(time=0.1))
+    return current_analysis
 def configure_engine_for_time_control(time_control):
     """Dynamically configure Stockfish settings based on game time."""
     global engine
@@ -332,36 +336,26 @@ def configure_engine_for_time_control(time_control):
 
     return failed_options
 def restart_stockfish(config):
-    """Restarts Stockfish and re-applies configuration."""
-    global engine
-    time.sleep(1)  # Short delay before restarting
+    """Restarts Stockfish and re-applies configuration in a separate thread."""
+    def restart_task():
+        global engine
+        logging.info("⏳ Restarting Stockfish...")
+        time.sleep(1)  # Short delay before restarting
+        try:
+            # Assuming engine has a method to cleanly shut down
+            engine.quit()
+            logging.info("Stockfish shut down successfully.")
+            
+            # Reinitialize the engine and reapply the config
+            engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+            logging.info("Stockfish restarted successfully.")
+            configure_engine_for_time_control(config)  # Reapply the configuration
+        except Exception as e:
+            logging.error(f"⚠️ Failed to restart Stockfish: {e}")
 
-    # Close the existing engine (if any)
-    try:
-        if engine:
-            engine.close()
-    except Exception as e:
-        logging.warning(f"⚠️ Failed to close engine: {e}")
-
-    # Restart Stockfish
-    try:
-        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-        logging.info("✅ Stockfish restarted successfully!")
-
-        # Reapply configuration
-        failed_options = []
-        for option, value in config.items():
-            try:
-                engine.configure({option: value})
-                logging.info(f"✅ Successfully reconfigured {option} = {value}")
-            except Exception as e:
-                logging.warning(f"⚠️ Failed to set {option} after restart: {e}")
-                failed_options.append(option)
-
-        logging.info(f"✅ Stockfish reconfigured after restart. Failed options: {failed_options if failed_options else 'None'}")
-
-    except Exception as e:
-        logging.critical(f"❌ Stockfish restart failed! Check engine path or system resources. Error: {e}")
+    # Run the restart task in a new thread
+    restart_thread = threading.Thread(target=restart_task, daemon=True)
+    restart_thread.start()
 # Infinite loop to keep challenging bots
 def monitor_health():
     while True:
@@ -690,13 +684,32 @@ def decode_move(index, board):
     legal_moves = list(board.legal_moves)
     return legal_moves[index % len(legal_moves)] if legal_moves else board.san(board.peek())
 
+def get_dynamic_depth(clock, position_complexity=1.0, game_phase="middlegame"):
+    """Dynamic depth adjustment based on time control, position complexity, and game phase."""
+    base_depth = 15  # Default depth for normal situations
+    
+    # Increase depth for slower time controls or complex positions
+    if game_phase == "endgame" or position_complexity > 0.7:
+        base_depth += 5  # Deeper search for complex positions
+    
+    # Adjust based on time control (longer games can afford deeper searches)
+    if clock["initial"] > 600:  # Classical game (more than 10 minutes initial)
+        base_depth += 3  # Deeper search for longer time controls
+    
+    return base_depth
 
-def monte_carlo_tree_search(fen):
+def monte_carlo_tree_search(fen, clock, is_losing=False, position_complexity=1.0, opponent_speed=1.0, game_phase="middlegame"):
     board = chess.Board(fen)
     
-    # Try getting the best move from Stockfish
+    # Get the optimal time control using your defined function
+    time_limit = get_time_control(clock, is_losing, position_complexity, opponent_speed, game_phase)
+    
+    # Get dynamic depth based on current game state
+    depth = get_dynamic_depth(clock, position_complexity, game_phase)
+    
+    # Try getting the best move from Stockfish with the time limit
     try:
-        result = engine.play(board, chess.engine.Limit(time=0.1))  # Adjust time as needed
+        result = engine.play(board, chess.engine.Limit(time=time_limit))  # Pass time_limit calculated by get_time_control
         return result.move.uci()
     except Exception as e:
         logger.warning(f"⚠️ Stockfish MCTS failed: {e}, evaluating strongest move from legal moves!")
@@ -711,8 +724,8 @@ def monte_carlo_tree_search(fen):
     for move in legal_moves:
         board.push(move)  # Make the move
 
-        # Analyze position after making the move
-        analysis = engine.analyse(board, chess.engine.Limit(depth=min(15, max_time * 2)))
+        # Analyze position after making the move with dynamic depth
+        analysis = engine.analyse(board, chess.engine.Limit(depth=depth))  # Use dynamic depth
         eval_score = analysis["score"].relative.score(mate_score=10000)  # Convert mate scores
 
         if eval_score > best_eval:
@@ -722,6 +735,7 @@ def monte_carlo_tree_search(fen):
         board.pop()  # Undo move
 
     return best_fallback_move.uci() if best_fallback_move else None
+
 @lru_cache(maxsize=20000)
 def cached_dnn_prediction(fen):
     try:
@@ -839,15 +853,24 @@ async def play_game(game_id, game):
 
     except Exception as e:
         logger.critical(f"🔥 Critical error in game loop: {e}")
-    # Handle game result
+async def handle_game_results(game_id, board):
     result = board.result()
-    messages = {
-        "1-0": "🏆 GG! I won! Thanks for playing! 😊",
-        "0-1": "🤝 Well played! You got me this time. GG! 👍",
-        "1/2-1/2": "⚖️ A solid game! A draw this time. 🤝"
+    
+    # ✅ Friendly endgame messages
+     messages = {
+        "1-0": "🏆 Checkmate! I win! Better luck next time, human. 😉 GGS",
+        "0-1": "🤖 Well played! You got me this time... but I’ll be back! Thank my internet😈",
+        "1/2-1/2": "⚖️ A solid quantum game! Schrödinger’s equation collapses—it's a draw! 🎭"
     }
-
+    # ✅ Send message to Lichess
     await client.bots.post_message(game_id, messages.get(result, "Game over!"))
+
+    # ✅ Log and store the game data for learning
+    logger.info(f"📊 Game {game_id} finished. Result: {result}")
+    experience_replay.store(game_mgr.get_game_data(game_id))
+
+    # ✅ Cleanup game resources
+    game_mgr.cleanup_game(game_id)
 
 async def reconnect_lichess():
     print("Reconnecting to Lichess...")
@@ -899,21 +922,92 @@ async def handle_events():
         except Exception as e:
             logger.critical(f"🔥 Critical error in event loop: {e}\n{traceback.format_exc()}")
             await reconnect_lichess()
+async def process_event(event):
+    """Handles incoming Lichess events with enhanced logic."""
+    try:
+        event_type = event.get("type", "")
+
+        if event_type == "challenge":
+            logger.info(f"📩 Received challenge: {event}")
+            await handle_challenge(event["challenge"])
+
+        elif event_type == "gameStart":
+            game_id = event["game"]["id"]
+            logger.info(f"🎯 Game started: {game_id}")
+
+            if game_mgr.register_game(game_id):
+                asyncio.create_task(play_game(game_id, event["game"]))
+            else:
+                logger.warning(f"⚠️ Duplicate game detected: {game_id}, ignoring...")
+
+        elif event_type == "gameFinish":
+            game_id = event["game"]["id"]
+            logger.info(f"🏁 Game finished: {game_id}")
+            game_mgr.cleanup_game(game_id)
+
+        elif event_type == "gameState":
+            game_id = event["game"]["id"]
+            moves = event["game"]["moves"].split()
+            logger.debug(f"🔄 Game update: {game_id} | Moves: {moves}")
+
+            if moves:
+                last_move = moves[-1]
+                if is_suspicious_move(last_move, event["game"]):  
+                    logger.info(f"🚨 Suspected cheater detected in {game_id}! Playing instantly...")
+                    await client.bots.make_move(game_id, get_instant_flag_move(event["game"]))
+
+    except Exception as e:
+        logger.error(f"⚠️ Error processing event: {e}\n{traceback.format_exc()}")
 
 async def main():
+    """NECROMINDX Bot - Ultimate AI Chess Engine"""
     try:
         loop = asyncio.get_running_loop()
+
+        # ✅ Ensure Stockfish is initialized before anything else
+        if not initialize_stockfish():
+            logger.critical("🚨 Stockfish failed to initialize. Exiting...")
+            return  # Stop execution if Stockfish isn't available
+
+        # ✅ Initialize Deep Neural Network (DNN)
+        logger.info("🧠 Loading NECROMINDX DNN Model...")
+        if os.path.exists(model_path):
+            dnn_model.load_state_dict(torch.load(model_path, map_location=device))
+            dnn_model.eval()
+            logger.info("✅ DNN Model Loaded Successfully!")
+        else:
+            logger.warning("⚠️ WARNING: DNN Model File Missing! Training from scratch...")
+
+        # ✅ TorchScript Compilation for Speed
+        dnn_model_scripted = torch.jit.script(dnn_model)  
+        logger.info("🚀 DNN Model compiled with TorchScript for faster inference!")
+
+        # ✅ Start bot health monitoring in a separate **async** task
+        loop.create_task(monitor_health())
+
+        # ✅ Start handling challenges and games
         loop.create_task(handle_events())
-        threading.Thread(target=monitor_health, daemon=True).start()
-        await asyncio.Event().wait()
+
+        # ✅ Manage Lichess Connectivity
+        while True:
+            try:
+                logger.info("🔄 Connecting to Lichess event stream...")
+                
+                async for event in stream_events():
+                    logger.info(f"📩 Event received: {event}")
+                    await process_event(event)  # Process events asynchronously
+
+            except Exception as e:
+                logger.warning(f"⚠️ Lichess connection lost: {e}")
+                await reconnect_lichess()  # Reconnect after failure
+
     except asyncio.CancelledError:
         logger.info("🛑 Event loop cancelled, shutting down...")
     except Exception as e:
         logger.critical(f"🔥 Fatal error in main loop: {e}\n{traceback.format_exc()}")
-
 if __name__ == "__main__":
     try:
         logger.info("🚀 NECROMINDX Bot Starting... AI Mode Activated")
-        asyncio.run(main())
+        asyncio.run(main())  # main() ensures Stockfish is initialized before anything else
     except KeyboardInterrupt:
-        logger.info("🛑 Bot manually stopped. Exiting gefully...")
+        logger.info("🛑 Bot manually stopped. Exiting gracefully...")
