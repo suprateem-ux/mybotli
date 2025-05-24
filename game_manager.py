@@ -64,11 +64,11 @@ class Game_Manager:
             while tournament := self._get_next_tournament_to_join():
                 await self._join_tournament(tournament)
 
-            while challenge_request := self._get_next_challenge_request():
-                await self._create_challenge(challenge_request)
-
             while challenge := self._get_next_challenge():
                 await self._accept_challenge(challenge)
+
+            while challenge_request := self._get_next_challenge_request():
+                await self._create_challenge(challenge_request)
 
         for tournament in self.unstarted_tournaments.values():
             tournament.cancel()
@@ -82,9 +82,7 @@ class Game_Manager:
 
     @property
     def is_busy(self) -> bool:
-        return (len(self.tasks) +
-                len(self.tournaments) +
-                self.reserved_game_spots) >= self.config.challenge.concurrency
+        return len(self.tasks) + len(self.tournaments) + self.reserved_game_spots >= self.config.challenge.concurrency
 
     def add_challenge(self, challenge: Challenge) -> None:
         if challenge not in self.open_challenges:
@@ -193,6 +191,7 @@ class Game_Manager:
 
         del self.tournaments[tournament.id_]
         print(f'Tournament "{tournament.name}" has ended.')
+        self.changed_event.set()
 
     def _set_next_matchmaking(self, delay: int) -> None:
         if not self.matchmaking_enabled:

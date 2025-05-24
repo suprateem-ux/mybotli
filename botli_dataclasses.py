@@ -32,7 +32,6 @@ class Book_Settings:
 @dataclass
 class Bot:
     username: str
-    tos_violation: bool
     rating_diffs: dict[Perf_Type, int]
 
     def __eq__(self, __o: object) -> bool:
@@ -206,7 +205,7 @@ class Game_Information:
 
 @dataclass
 class Gaviota_Result:
-    moves: list[chess.Move]
+    move: chess.Move
     wdl: Literal[-2, -1, 0, 1, 2]
     dtm: int
 
@@ -219,6 +218,34 @@ class Lichess_Move:
 
 
 @dataclass
+class Matchmaking_Data:
+    release_time: datetime = datetime.now()
+    multiplier: int = 1
+    color: Challenge_Color = Challenge_Color.WHITE
+
+    @classmethod
+    def from_dict(cls, dict_: dict[str, Any]) -> 'Matchmaking_Data':
+        release_time = datetime.fromisoformat(dict_['release_time']) if 'release_time' in dict_ else datetime.now()
+        multiplier = dict_.get('multiplier', 1)
+        color = Challenge_Color(dict_['color']) if 'color' in dict_ else Challenge_Color.WHITE
+
+        return Matchmaking_Data(release_time, multiplier, color)
+
+    def to_dict(self) -> dict[str, Any]:
+        dict_ = {}
+        if self.release_time > datetime.now():
+            dict_['release_time'] = self.release_time.isoformat(timespec='seconds')
+
+        if self.multiplier > 1:
+            dict_['multiplier'] = self.multiplier
+
+        if self.color == Challenge_Color.BLACK:
+            dict_['color'] = Challenge_Color.BLACK
+
+        return dict_
+
+
+@dataclass
 class Matchmaking_Type:
     name: str
     initial_time: int
@@ -226,10 +253,11 @@ class Matchmaking_Type:
     rated: bool
     variant: Variant
     perf_type: Perf_Type
-    multiplier: float
+    config_multiplier: int | None
+    multiplier: int
     weight: float
-    min_rating_diff: int
-    max_rating_diff: int
+    min_rating_diff: int | None
+    max_rating_diff: int | None
 
     def __post_init__(self) -> None:
         self.estimated_game_duration = timedelta(seconds=max(self.initial_time, 3) * 1.33 + self.increment * 94.48)
@@ -248,7 +276,7 @@ class Matchmaking_Type:
             initial_time_str = str(initial_time_min)
         tc_str = f'TC: {initial_time_str}+{self.increment}'
         rated_str = 'Rated' if self.rated else 'Casual'
-        variant_str = f'Variant: {self.variant.value}'
+        variant_str = f'Variant: {self.variant}'
         delimiter = 5 * ' '
 
         return delimiter.join([self.name, tc_str, rated_str, variant_str])
@@ -273,7 +301,7 @@ class Move_Response:
 
 @dataclass
 class Syzygy_Result:
-    moves: list[chess.Move]
+    move: chess.Move
     wdl: Literal[-2, -1, 0, 1, 2]
     dtz: int
 
@@ -291,6 +319,7 @@ class Tournament:
     start_time: datetime
     end_time: datetime
     name: str
+    initial_time: int
     bots_allowed: bool
     team: str | None = None
     password: str | None = None
@@ -303,6 +332,7 @@ class Tournament:
                    start_time := datetime.fromisoformat(tournament_info['startsAt']),
                    start_time + timedelta(minutes=tournament_info['minutes']),
                    tournament_info.get('fullName', ''),
+                   tournament_info['clock']['limit'],
                    tournament_info.get('botsAllowed', False))
 
     @property
@@ -311,7 +341,7 @@ class Tournament:
 
     @property
     def seconds_to_finish(self) -> float:
-        return (self.end_time - datetime.now(UTC)).total_seconds()
+        return (self.end_time - datetime.now(UTC)).total_seconds() - max(30.0, min(self.initial_time / 2, 120.0))
 
     def cancel(self) -> None:
         if self.start_task:

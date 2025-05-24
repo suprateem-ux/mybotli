@@ -4,7 +4,7 @@ import logging
 import os
 import signal
 import sys
-from enum import Enum
+from enum import StrEnum
 from typing import TypeVar
 
 from api import API
@@ -37,7 +37,7 @@ COMMANDS = {
     'whitelist': 'Temporarily whitelists a user. Use config for permanent whitelisting. Usage: whitelist USERNAME'
 }
 
-EnumT = TypeVar('EnumT', bound=Enum)
+EnumT = TypeVar('EnumT', bound=StrEnum)
 
 
 class User_Interface:
@@ -179,7 +179,7 @@ class User_Interface:
             print(e)
             return
 
-        challenge_request = Challenge_Request(opponent_username, initial_time, increment, rated, color, variant, 30)
+        challenge_request = Challenge_Request(opponent_username, initial_time, increment, rated, color, variant, 300)
         self.game_manager.request_challenge(challenge_request)
         print(f'Challenge against {challenge_request.opponent_username} added to the queue.')
 
@@ -204,9 +204,9 @@ class User_Interface:
         challenges: list[Challenge_Request] = []
         for _ in range(count):
             challenges.append(Challenge_Request(opponent_username, initial_time,
-                              increment, rated, Challenge_Color.WHITE, variant, 30))
+                              increment, rated, Challenge_Color.WHITE, variant, 300))
             challenges.append(Challenge_Request(opponent_username, initial_time,
-                              increment, rated, Challenge_Color.BLACK, variant, 30))
+                              increment, rated, Challenge_Color.BLACK, variant, 300))
 
         self.game_manager.request_challenge(*challenges)
         print(f'Challenges for {count} game pairs against {opponent_username} added to the queue.')
@@ -256,7 +256,7 @@ class User_Interface:
         else:
             color = Challenge_Color.RANDOM
 
-        challenge_request = Challenge_Request(opponent_username, initial_time, increment, rated, color, variant, 30)
+        challenge_request = Challenge_Request(opponent_username, initial_time, increment, rated, color, variant, 300)
         self.game_manager.request_challenge(challenge_request)
         print(f'Challenge against {challenge_request.opponent_username} added to the queue.')
 
@@ -306,7 +306,7 @@ class User_Interface:
 
     def _find_enum(self, name: str, enum_type: type[EnumT]) -> EnumT:
         for enum in enum_type:
-            if enum.value.lower() == name.lower():
+            if enum.lower() == name.lower():
                 return enum
 
         raise ValueError(f'{name} is not a valid {enum_type}')

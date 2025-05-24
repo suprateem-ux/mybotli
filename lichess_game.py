@@ -229,7 +229,7 @@ class Lichess_Game:
         if not move_response.is_engine_move:
             return move_response.is_drawish
 
-        if self.board.fullmove_number < self.config.offer_draw.min_game_length:
+        if self.board.fullmove_number - (not self.is_white) < self.config.offer_draw.min_game_length:
             return False
 
         if len(self.scores) < self.config.offer_draw.consecutive_moves:
@@ -363,16 +363,15 @@ class Lichess_Game:
             color = 'white' if self.board.turn else 'black'
             username = self.game_info.white_name if self.board.turn else self.game_info.black_name
 
-        if self.board.uci_variant != 'chess' or self.board.chess960:
-            speeds = 'bullet,blitz,rapid,classical'
-        else:
-            speeds = self.game_info.speed
+        speeds = self.game_info.speed if self.game_info.variant == Variant.STANDARD else None
+        modes = 'rated' if self.game_info.rated else None
 
         start_time = time.perf_counter()
         response = await self.api.get_opening_explorer(username,
                                                        self.board.fen(),
                                                        self.game_info.variant,
                                                        color,
+                                                       modes,
                                                        speeds,
                                                        self.config.online_moves.opening_explorer.timeout)
         if response is None:
@@ -506,6 +505,9 @@ class Lichess_Game:
             candidate_moves = [chessdb_move for chessdb_move in response['moves']
                                if chessdb_move['rank'] > 0]
 
+        if len(candidate_moves) < self.config.online_moves.chessdb.min_candidates:
+            return
+
         random.shuffle(candidate_moves)
         for chessdb_move in candidate_moves:
             move = chess.Move.from_uci(chessdb_move['uci'])
@@ -524,37 +526,35 @@ class Lichess_Game:
     def _probe_gaviota(self, moves: Iterable[chess.Move]) -> Gaviota_Result:
         assert self.gaviota_tablebase
 
-        best_moves: list[chess.Move] = []
+        best_move = chess.Move.null()
         best_wdl = -2
         best_dtm = 1_000_000
+        board_copy = self.board.copy(stack=False)
         for move in moves:
-            board_copy = self.board.copy(stack=False)
             board_copy.push(move)
 
             if board_copy.is_checkmate():
-                wdl = 2
-                dtm = 0
-            else:
-                dtm = -self.gaviota_tablebase.probe_dtm(board_copy)
-                wdl = self._value_to_wdl(dtm, board_copy.halfmove_clock)
+                return Gaviota_Result(move, 2, 0)
 
-            if best_moves:
+            dtm = -self.gaviota_tablebase.probe_dtm(board_copy)
+            wdl = self._value_to_wdl(dtm, board_copy.halfmove_clock)
+
+            if best_move:
                 if wdl > best_wdl:
-                    best_moves = [move]
+                    best_move = move
                     best_wdl = wdl
                     best_dtm = dtm
-                elif wdl == best_wdl:
-                    if dtm < best_dtm:
-                        best_moves = [move]
-                        best_dtm = dtm
-                    elif dtm == best_dtm:
-                        best_moves.append(move)
+                elif wdl == best_wdl and dtm < best_dtm:
+                    best_move = move
+                    best_dtm = dtm
             else:
-                best_moves.append(move)
+                best_move = move
                 best_wdl = wdl
                 best_dtm = dtm
 
-        return Gaviota_Result(best_moves, best_wdl, best_dtm)
+            board_copy.pop()
+
+        return Gaviota_Result(best_move, best_wdl, best_dtm)
 
     async def _make_gaviota_move(self) -> Move_Response | None:
         match chess.popcount(self.board.occupied):
@@ -594,19 +594,18 @@ class Lichess_Game:
                 return
 
         await self.engine.stop_pondering(self.board)
-        move = random.choice(result.moves)
-        message = f'Gaviota: {self._format_move(move):14} {egtb_info}'
-        return Move_Response(move, message, is_drawish=offer_draw, is_resignable=resign)
+        message = f'Gaviota: {self._format_move(result.move):14} {egtb_info}'
+        return Move_Response(result.move, message, is_drawish=offer_draw, is_resignable=resign)
 
     def _probe_syzygy(self, moves: Iterable[chess.Move]) -> Syzygy_Result:
         assert self.syzygy_tablebase
 
-        best_moves: list[chess.Move] = []
+        best_move = chess.Move.null()
         best_wdl = -2
         best_dtz = 1_000_000
-        best_real_dtz = best_dtz
+        best_real_dtz = 0
+        board_copy = self.board.copy(stack=False)
         for move in moves:
-            board_copy = self.board.copy(stack=False)
             board_copy.push(move)
 
             dtz = -self.syzygy_tablebase.probe_dtz(board_copy)
@@ -619,26 +618,25 @@ class Lichess_Game:
                 elif wdl > 0:
                     dtz -= 10_000
 
-            if best_moves:
+            if best_move:
                 if wdl > best_wdl:
-                    best_moves = [move]
+                    best_move = move
                     best_wdl = wdl
                     best_dtz = dtz
                     best_real_dtz = real_dtz
-                elif wdl == best_wdl:
-                    if dtz < best_dtz:
-                        best_moves = [move]
-                        best_dtz = dtz
-                        best_real_dtz = real_dtz
-                    elif dtz == best_dtz:
-                        best_moves.append(move)
+                elif wdl == best_wdl and dtz < best_dtz:
+                    best_move = move
+                    best_dtz = dtz
+                    best_real_dtz = real_dtz
             else:
-                best_moves.append(move)
+                best_move = move
                 best_wdl = wdl
                 best_dtz = dtz
                 best_real_dtz = real_dtz
 
-        return Syzygy_Result(best_moves, best_wdl, best_real_dtz)
+            board_copy.pop()
+
+        return Syzygy_Result(best_move, best_wdl, best_real_dtz)
 
     async def _make_syzygy_move(self) -> Move_Response | None:
         match chess.popcount(self.board.occupied):
@@ -681,9 +679,8 @@ class Lichess_Game:
                 resign = True
 
         await self.engine.stop_pondering(self.board)
-        move = random.choice(result.moves)
-        message = f'Syzygy:  {self._format_move(move):14} {egtb_info}'
-        return Move_Response(move, message, is_drawish=offer_draw, is_resignable=resign)
+        message = f'Syzygy:  {self._format_move(result.move):14} {egtb_info}'
+        return Move_Response(result.move, message, is_drawish=offer_draw, is_resignable=resign)
 
     def _value_to_wdl(self, value: int, halfmove_clock: int) -> Literal[-2, -1, 0, 1, 2]:
         if value > 0:
@@ -857,17 +854,20 @@ class Lichess_Game:
         if self.config.opening_books.enabled:
             opening_sources[self._make_book_move] = self.config.opening_books.priority
 
-        if self.config.online_moves.opening_explorer.enabled:
-            if self.board.uci_variant == 'chess' or self.config.online_moves.opening_explorer.use_for_variants:
-                opening_sources[self._make_opening_explorer_move] = self.config.online_moves.opening_explorer.priority
+        opening_explorer_config = self.config.online_moves.opening_explorer
+        if opening_explorer_config.enabled:
+            if not opening_explorer_config.only_without_book or not self.book_settings.readers:
+                if self.board.uci_variant == 'chess' or opening_explorer_config.use_for_variants:
+                    opening_sources[self._make_opening_explorer_move] = opening_explorer_config.priority
 
         if self.config.online_moves.lichess_cloud.enabled:
-            if not (self.config.online_moves.lichess_cloud.only_without_book and self.book_settings.readers):
+            if not self.config.online_moves.lichess_cloud.only_without_book or not self.book_settings.readers:
                 opening_sources[self._make_cloud_move] = self.config.online_moves.lichess_cloud.priority
 
         if self.config.online_moves.chessdb.enabled:
-            if self.board.uci_variant == 'chess':
-                opening_sources[self._make_chessdb_move] = self.config.online_moves.chessdb.priority
+            if not self.config.online_moves.chessdb.only_without_book or not self.book_settings.readers:
+                if self.board.uci_variant == 'chess':
+                    opening_sources[self._make_chessdb_move] = self.config.online_moves.chessdb.priority
 
         move_sources += [opening_source
                          for opening_source, _
