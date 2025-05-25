@@ -64,6 +64,7 @@ opening_books:
     standard:
       selection: best_move
       names:
+        - optimusbest
         - optimus
         - DefaultBook
         - Aot
@@ -177,7 +178,8 @@ messages:
   hello_spectators: "Welcome, time-benders and reality-weavers! Witness the true nature of the universe.Type !help to find the secrets of me"
   goodbye_spectators: "Quantum cascade ended. Thanks for watching — may our paths cross again! 🌌♟️"
 books:
-  optimus: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\engines\\OPTIMUS32.bin"
+  optimus: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\engines\\OPTIMUS4.bin"
+  optimusbest: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\engines\\OPTIMUS32.bin"
   DefaultBook: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\Perfect2023.bin"
   secondcbook: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\Cerebellum3Merge.bin"
   Aot: "C:\\Users\\Admin\\Downloads\\torom-boti\\torom-boti\\engines\\Titans.bin"
