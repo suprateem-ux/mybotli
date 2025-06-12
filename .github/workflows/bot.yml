@@ -1,8 +1,28 @@
-- name: Check CPU and RAM limits
-  run: |
-    echo "CPU info:"
-    lscpu
-    echo "Memory info:"
-    free -h
-    echo "Core count:"
-    nproc
+name: Check GitHub Runner Resources
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-resources:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install required system tools
+        run: |
+          sudo apt update
+          sudo apt install -y procps util-linux
+
+      - name: Show CPU and RAM Info
+        run: |
+          echo "🧠 CPU Info:"
+          lscpu
+          echo ""
+          
+          echo "💾 Memory Info:"
+          free -h
+          echo ""
+          
+          echo "🧮 Total Usable Cores:"
+          nproc
+
