@@ -1,0 +1,8 @@
+- name: Check CPU and RAM limits
+  run: |
+    echo "CPU info:"
+    lscpu
+    echo "Memory info:"
+    free -h
+    echo "Core count:"
+    nproc
