@@ -1,0 +1,7 @@
+jobs:
+  check-bmi2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check CPU Flags
+        run: |
+          grep -m1 'flags' /proc/cpuinfo | tr ' ' '\n' | grep bmi2
