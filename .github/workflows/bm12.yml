@@ -1,3 +1,8 @@
+name: BMI2 Test
+
+on:
+  push:
+
 jobs:
   check-bmi2:
     runs-on: ubuntu-latest
